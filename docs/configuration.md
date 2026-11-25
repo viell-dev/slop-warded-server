@@ -77,7 +77,7 @@ Limits protect the server from clients, not from your handlers:
 | `concurrent_streams` | Requests at the same time on one HTTP/2 or HTTP/3 connection | 128 |
 | `head_bytes`         | Size of a request head                               | 32 KiB     |
 | `handshake_timeout`  | Time for a TLS or QUIC handshake                     | 10 seconds |
-| `head_timeout`       | Time for a request head, and idle time on HTTP/1.1   | 30 seconds |
+| `head_timeout`       | Time for a request head, on HTTP/2 only the first; idle time on HTTP/1.1   | 30 seconds |
 | `idle_timeout`       | Silence on HTTP/2 and HTTP/3 connections             | 30 seconds |
 
 Each connection uses a file descriptor. On Linux, allow more of them than `connections`, for example

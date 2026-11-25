@@ -6,11 +6,25 @@ mod common;
 use common::{Authority, Client, text};
 use http::Version;
 use std::{net::SocketAddr, process::Command, time::Duration};
+use tokio::sync::mpsc;
 
 fn signal(name: &str) {
     let process = std::process::id().to_string();
     let status = Command::new("kill").args([name, &process]).status();
     assert!(status.unwrap().success());
+}
+
+/// An application that never answers, and tells when it was asked.
+fn waiting_app() -> (axum::Router, mpsc::Receiver<()>) {
+    let (started, has_started) = mpsc::channel(1);
+    let app = axum::Router::new().fallback(move || {
+        let started = started.clone();
+        async move {
+            started.send(()).await.unwrap();
+            std::future::pending::<()>().await;
+        }
+    });
+    (app, has_started)
 }
 
 /// One test after the other, because signals reach both.
@@ -24,7 +38,7 @@ async fn a_second_signal_ends_the_grace_period() {
     let address: SocketAddr = bound.https_addr();
     drop(bound);
 
-    let app = axum::Router::new().fallback(std::future::pending::<()>);
+    let (app, mut started) = waiting_app();
     let server = common::server(&authority).https(address);
     let mut serving = tokio::spawn(server.serve(app));
     let mut client = common::soon(async {
@@ -37,7 +51,7 @@ async fn a_second_signal_ends_the_grace_period() {
     })
     .await;
     tokio::spawn(async move { client.get("/").await });
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    common::soon(started.recv()).await.unwrap();
 
     signal("-INT");
     let waiting = tokio::time::timeout(Duration::from_millis(500), &mut serving).await;
@@ -58,7 +72,7 @@ async fn a_second_signal_ends_the_grace_period() {
 async fn signals_that_arrive_together_count_as_two() {
     let _signals = SIGNALS.lock().await;
     let authority = Authority::new();
-    let app = axum::Router::new().fallback(std::future::pending::<()>);
+    let (app, mut started) = waiting_app();
     let bound = common::server(&authority).bind().unwrap();
     let address: SocketAddr = bound.https_addr();
     drop(bound);
@@ -73,7 +87,7 @@ async fn signals_that_arrive_together_count_as_two() {
     })
     .await;
     tokio::spawn(async move { client.get("/").await });
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    common::soon(started.recv()).await.unwrap();
 
     // Blocks the only thread, so that the server sees both at once.
     signal("-INT");

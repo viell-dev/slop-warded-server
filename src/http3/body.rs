@@ -4,11 +4,10 @@
 //! normally when its body fails, so a truncated response looks complete, and `h3-util` 0.0.6
 //! cancels every request whose body the handler leaves unread.
 
-use super::BoxError;
+use super::{BoxError, head::declared_length};
 use axum::{body::HttpBody, response::Response};
 use bytes::{Buf, Bytes};
 use h3::{error::Code, server::RequestStream};
-use http::header::CONTENT_LENGTH;
 use http_body::{Frame, SizeHint};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
@@ -141,10 +140,8 @@ impl Responder {
     /// Send a response, whose content has the length that it declares unless it is to `HEAD`.
     pub(super) async fn send(mut self, response: Response, to_head: bool) -> Result<(), BoxError> {
         let (parts, body) = response.into_parts();
-        let mut remaining = match parts.headers.get(CONTENT_LENGTH) {
-            Some(length) if !to_head => Some(length.to_str()?.parse::<u64>()?),
-            _ => None,
-        };
+        let declared = declared_length(&parts.headers)?;
+        let mut remaining = declared.filter(|_| !to_head);
         let head = http::Response::from_parts(parts, ());
         self.stream.send_response(head).await?;
         let mut body = std::pin::pin!(body);

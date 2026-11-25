@@ -145,7 +145,8 @@ code gets `index.html` with a 200, which is hard to find. Programs such as curl,
 anything, get a 404 too, unless they send `Accept: text/html`.
 
 `app` goes into `src/routes.rs`, and `main` calls it with the directory of the build. The checks in
-the `main` above belong in a test.
+the `main` above belong in a test. To run the listing as it is, save it as `examples/spa.rs` and use
+`cargo run --example spa`.
 
 `get` is the name of a condition in `warded::matchers` and of a function in `axum::routing`. Import
 one of them under another name, as here, where you need both.

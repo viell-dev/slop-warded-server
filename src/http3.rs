@@ -7,10 +7,11 @@ use crate::{
     Error, Limits, Tls,
     context::{Connection, Security},
 };
+use axum::response::IntoResponse;
 use body::{RequestBody, Responder};
 use bytes::Bytes;
 use h3::{error::Code, server::RequestResolver};
-use http::{Method, Request};
+use http::{Method, Request, StatusCode};
 use quinn::{VarInt, crypto::rustls::QuicServerConfig};
 use std::{io, net::UdpSocket, sync::Arc, time::Duration};
 use tokio::{
@@ -171,7 +172,9 @@ impl QuicConnection {
         let mut draining = false;
         loop {
             let accepted = {
-                // Kept while requests end, because h3 can be in the middle of writing a GOAWAY.
+                // Kept while requests end, because h3 can be in the middle of writing a GOAWAY, which
+                // it does once the client has said goodbye and has all its responses. Stopping can
+                // still interrupt that, when there is nothing left to say it for.
                 let mut accept = std::pin::pin!(connection.accept());
                 loop {
                     tokio::select! {
@@ -263,6 +266,12 @@ async fn try_serve_request(
         }
     };
     let to_head = parts.method == Method::HEAD;
-    let Ok(response) = app.oneshot(Request::from_parts(parts, body)).await;
+    let response = if parts.method == Method::CONNECT {
+        // There is no way to give the application the stream for a tunnel.
+        StatusCode::NOT_IMPLEMENTED.into_response()
+    } else {
+        let Ok(response) = app.oneshot(Request::from_parts(parts, body)).await;
+        response
+    };
     responder.send(head::prepare(response), to_head).await
 }

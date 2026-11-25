@@ -152,9 +152,11 @@ impl Server {
         S::Future: Send + 'static,
     {
         let tls = self.tls.clone();
+        let bound = self.bind()?;
+        // From here on, the signals no longer end the process by themselves.
         let mut signals = signal::ShutdownSignals::new();
         let (stop, force) = (CancellationToken::new(), CancellationToken::new());
-        let serving = self.bind()?.run(app, stop.cancelled(), force.cancelled());
+        let serving = bound.run(app, stop.cancelled(), force.cancelled());
         let stopping = async {
             // The same listener for both, so that neither is lost.
             signals.next().await;
@@ -239,10 +241,10 @@ impl BoundServer {
 
     /// Serve until `shutdown` completes, then let requests in progress finish.
     ///
-    /// Connections that are still open when the grace period ends are closed. WebSockets and
+    /// Connections with requests in progress when the grace period ends are closed. WebSockets and
     /// other upgraded connections do not extend it: once everything else has finished, reading
-    /// from them or writing to them fails, but a handler that does neither does not notice. To end
-    /// them properly, tell their handlers from `shutdown`. Dropping the future does the same to all connections at once. Returns early
+    /// from them or writing to them fails. Their handlers own them, so they stay open until these
+    /// notice and drop them. To end them properly, tell the handlers from `shutdown`. Dropping the future does the same to all connections at once. Returns early
     /// with the error if a listener fails.
     pub async fn serve_until<S>(
         self,

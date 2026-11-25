@@ -31,21 +31,26 @@ pub(super) fn content_length(headers: &HeaderMap) -> Result<Option<u64>, &'stati
     if headers.get_all(TE).iter().any(|value| value != "trailers") {
         return Err("the request head has a TE field other than `trailers`");
     }
+    declared_length(headers)
+}
+
+/// The one length that `Content-Length` fields agree on.
+pub(super) fn declared_length(headers: &HeaderMap) -> Result<Option<u64>, &'static str> {
     let mut lengths = headers.get_all(CONTENT_LENGTH).iter();
     let Some(length) = lengths.next() else {
         return Ok(None);
     };
     if lengths.any(|other| other != length) {
-        return Err("the request head has different Content-Length fields");
+        return Err("the head has different Content-Length fields");
     }
     let digits = length.to_str().unwrap_or_default();
     if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err("the request head has an invalid Content-Length");
+        return Err("the head has an invalid Content-Length");
     }
     let length = digits.parse();
     length
         .map(Some)
-        .map_err(|_| "the request head has an invalid Content-Length")
+        .map_err(|_| "the head has an invalid Content-Length")
 }
 
 /// Make the application's response one that HTTP/3 can carry.

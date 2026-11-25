@@ -11,9 +11,9 @@ release, 0.0.8, has these open defects:
 
 - **Memory exhaustion.** A client can declare a huge frame and make the server hold all of it in
   memory for as long as it keeps sending ([h3#366](https://github.com/hyperium/h3/pull/366)).
-  `Limits::head_timeout` ends this while the head of a request arrives, but not for the trailers
-  after its body, nor on a connection's control stream. Nothing else here bounds it
-  ([#3](https://github.com/viell-dev/slop-warded-server/issues/3)).
+  `Limits::head_timeout` ends this until the head of a request has arrived. It does not end it for
+  what follows, such as trailers and unknown frames, nor on a connection's control stream. Nothing
+  else here bounds it ([#3](https://github.com/viell-dev/slop-warded-server/issues/3)).
 - **Cancelled requests.** A handler is not cancelled when the client gives up on one request, only
   when the whole connection ends ([h3#352](https://github.com/hyperium/h3/issues/352)).
 - **Request heads that never arrive.** The server gives up on each one, but h3 remembers it until
@@ -63,8 +63,8 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 `Limits::head_timeout` covers every request head on HTTP/1.1 and HTTP/3, but only the first one of a
 connection on HTTP/2.
 
-A WebSocket fails at the end of a shutdown when its handler next uses it. A handler that waits for
-something else keeps its connection open until it looks, or the program ends.
+A WebSocket fails at the end of a shutdown when its handler next uses it. The handler owns it, so
+the connection stays open until the handler drops it, or the program ends.
 
 Nothing limits how long a client takes to send a request body or to read a response, as long as its
 connection is alive. Each such client holds a connection.
