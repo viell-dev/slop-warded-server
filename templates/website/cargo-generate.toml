@@ -1,0 +1,3 @@
+[template]
+# Askama's own placeholders look like cargo-generate's.
+exclude = ["templates/*"]
