@@ -15,7 +15,7 @@ for template in templates/*/; do
     project="$work/projects/my-$name"
     echo "== $name"
     cargo generate --path "$repository" "templates/$name" --name "my-$name" \
-        --destination "$work/projects" --vcs none --silent
+        --destination "$work/projects" --vcs none --silent --no-workspace
     if grep --recursive --files-with-matches 'project-name' "$project"; then
         echo "the files above still hold a placeholder" >&2
         exit 1

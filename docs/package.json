@@ -1,0 +1,18 @@
+{
+  "name": "warded-server-docs-site",
+  "private": true,
+  "description": "The Warded Server documentation site, built with VitePress",
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "2.0.0-alpha.21"
+  }
+}

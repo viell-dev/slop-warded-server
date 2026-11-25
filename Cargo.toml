@@ -6,6 +6,7 @@ rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
 description = "Ready-wired HTTP/1.1, HTTP/2 and HTTP/3 server for Warded routes and Tower applications"
 repository = "https://github.com/viell-dev/slop-warded-server"
+homepage = "https://viell-dev.github.io/slop-warded-server/"
 readme = "README.md"
 keywords = ["http", "http3", "server", "tower", "axum"]
 categories = ["web-programming::http-server"]
@@ -86,3 +87,7 @@ missing_docs = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# The documentation site's example checks are an unpublished member; see docs/Cargo.toml.
+[workspace]
+members = ["docs"]
