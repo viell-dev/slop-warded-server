@@ -4,6 +4,12 @@ Versions follow [Semantic Versioning](https://semver.org). Any prerelease may br
 
 ## Unreleased
 
+- **Security:** what an HTTP/3 client can make the server hold in memory is bounded
+  ([#3](https://github.com/viell-dev/slop-warded-server/issues/3)). Frames that declare too much are
+  refused before they arrive, and a connection has at most 10 MB that handlers have not read yet.
+  [Limits](https://viell-dev.github.io/slop-warded-server/limits.html#connections) adds it up.
+- HTTP/3 request bodies may contain empty DATA frames.
+- `Limits::head_bytes` can be at most 512 KiB.
 - The [deployment guide](https://viell-dev.github.io/slop-warded-server/deployment.html) shows how an
   application can trust a proxy that ends TLS.
 - A response over TCP is no longer cut off when the client sends something as the connection closes,

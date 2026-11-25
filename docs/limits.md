@@ -9,27 +9,25 @@ description: "Known weaknesses of HTTP/3, what your application must provide, wh
 HTTP/3 comes from [h3](https://github.com/hyperium/h3), which calls itself experimental. Its latest
 release, 0.0.8, has these open defects:
 
-- **Memory exhaustion.** A client can declare a huge frame and make the server hold all of it in
-  memory for as long as it keeps sending ([h3#366](https://github.com/hyperium/h3/pull/366)).
-  `Limits::head_timeout` ends this until the head of a request has arrived. It does not end it for
-  what follows, such as trailers and unknown frames, nor on a connection's control stream. Nothing
-  else here bounds it ([#3](https://github.com/viell-dev/slop-warded-server/issues/3)).
 - **Cancelled requests.** A handler is not cancelled when the client gives up on one request, only
   when the whole connection ends ([h3#352](https://github.com/hyperium/h3/issues/352)).
-- **Request heads that never arrive.** The server gives up on each one, but h3 remembers it until
-  the connection ends ([h3#365](https://github.com/hyperium/h3/pull/365), fixed there but not
-  released).
 - **Malformed heads.** h3 accepts pseudo-header fields that are repeated or come after other fields,
   and uses the last of each. The server refuses fields about the connection and unclear lengths, but
   cannot see these.
-- **Empty DATA frames.** A request body that contains one fails
-  ([h3#372](https://github.com/hyperium/h3/issues/372)).
 
-The server works around others. It limits decoded heads
-([h3#379](https://github.com/hyperium/h3/issues/379)), and it contains a panic that a malformed body
-causes ([h3#386](https://github.com/hyperium/h3/issues/386)), although Rust still reports that
-panic. Containing it needs unwinding, so the `http3` feature refuses to compile with
-`panic = "abort"`.
+The server works around others, most of which let a client fill its memory. It gives h3 one frame at
+a time, and refuses one that declares too much
+([h3#366](https://github.com/hyperium/h3/pull/366),
+[h3#344](https://github.com/hyperium/h3/pull/344)). It limits decoded heads
+([h3#379](https://github.com/hyperium/h3/issues/379)), and shuts down a connection on which more
+than 1 000 request heads did not arrive ([h3#365](https://github.com/hyperium/h3/pull/365)). h3 has
+also panicked at what clients send ([h3#386](https://github.com/hyperium/h3/issues/386)). Such a
+panic ends one request or connection, which needs unwinding, so the `http3` feature refuses to
+compile with `panic = "abort"`.
+
+`head_bytes` counts the fields of a head once they are decoded. A head above it gets a 431, as on
+the other protocols. One that is above twice as much while it is still encoded is refused before it
+arrives, and its request fails without a response.
 
 `WARDED_HTTP3=off` [turns HTTP/3 off](./http3.md#turn-it-off). WebSockets, WebTransport and other
 uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never accepted.
@@ -71,6 +69,17 @@ The default [limits](./configuration.md#limits) are not tuned for any particular
 connection stays open as long as its client answers pings, so idle clients use up the connection
 limit. When it is reached, new TCP connections are closed without a response, and new QUIC
 connections are refused.
+
+One HTTP/3 connection can make the server hold this much:
+
+- 10 MB of requests that handlers have not read. At that point the client can send nothing more on
+  the connection, new requests included, until a handler reads or ends. Data in small packets takes
+  up to two and a half times as much memory, and 32 KiB more for each request;
+- twice `head_bytes` for the head or trailers of each concurrent request, as they arrive, and 4 KiB
+  of its body;
+- 10 MB of responses that the client has not confirmed.
+
+What handlers keep comes on top, so [limit bodies](./middleware.md) that they collect.
 
 At the end of a TCP connection the server waits until the client closes it too, because the client
 could otherwise lose the end of a response. It stops waiting when the client has been silent for

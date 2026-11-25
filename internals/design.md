@@ -39,8 +39,10 @@ applications would need adapters. `tokio-quiche` has a more mature HTTP/3, but b
 library built with C++ tools, its own certificate handling, and another interface to bridge. A proxy
 such as Caddy hides the client's protocol from the application, and Warded routes on it.
 
-Reconsider h3 if its [known defects](../docs/limits.md#http-3) are not released by the beta stage. The
-dependency is confined to `src/http3.rs` and `src/http3/`.
+Reconsider h3 if it gets a defect that the server can neither work around nor live with; its
+[known ones](../docs/limits.md#http-3) are tracked in
+[#2](https://github.com/viell-dev/slop-warded-server/issues/2). The dependency is confined to
+`src/http3.rs` and `src/http3/`.
 
 ## The HTTP/3 bridge is our own
 
@@ -56,6 +58,21 @@ Both are small; so is the replacement in `src/http3/body.rs` and `src/http3/head
 Hyper does for HTTP/2 and h3 leaves to its caller: checking request heads and `Content-Length`, and
 cleaning response heads.
 
+## The transport of h3 is our own
+
+h3 reads from QUIC through traits, which `h3-quinn` implements for Quinn. `src/http3/transport.rs`
+does it instead, because nothing between the two can bound what is read:
+
+- `src/http3/frames.rs` finds where frames begin and end. Only there can h3 be kept from reading
+  further than it decodes, and from holding a frame of any length.
+- Each read takes a few kilobytes. `h3-quinn` takes whatever has arrived, up to a megabyte when it
+  came in small packets, and Quinn then lets the client send as much again.
+
+It is not an HTTP/3 implementation: h3 still decides what every frame means and where it may come.
+The alternative was to wait for an h3 release, which had not come in the 18 months since 0.0.8, and
+would not change the second point. It also avoids a panic of `h3-quinn` when a stream is stopped
+([h3#361](https://github.com/hyperium/h3/issues/361)).
+
 ## Choices that are easy to undo by accident
 
 - **Responses are finished for each connection**, in `src/context.rs`, outside all layers: the content
@@ -68,6 +85,12 @@ cleaning response heads.
   connection, and the client can lose what it has not read. Neither Hyper nor `axum-server` waits.
 - **Connection slots are held by the stream**, not the service, so that upgraded connections count.
 - **Response streams reset unless finished.** Quinn finishes a stream that is dropped.
+- **What is kept of a request is copied.** The pieces that Quinn hands out keep the packets in
+  memory that they came in, so a limit on the length of what is kept is not one on its memory.
+- **Packets are received apart on Linux.** With receive offload, Quinn keeps whole batches of packets
+  in memory for the sake of one, and does not count them.
+- **Nothing is read ahead.** What has been read no longer counts against QUIC's windows, so the
+  client may send as much again, whether or not a handler has seen it.
 - **No `Forwarded` or `X-Forwarded-*` field is read.** A client can send them. Trusting a proxy
   depends on its address and on what it does with each field, so it is a [recipe for the
   application](../docs/deployment.md#a-proxy-that-ends-tls) and not a setting: a setting would have to

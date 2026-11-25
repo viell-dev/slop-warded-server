@@ -1,7 +1,9 @@
 //! HTTP/3 over QUIC, run by Quinn and h3.
 
 mod body;
+mod frames;
 mod head;
+mod transport;
 
 use crate::{
     Error, Limits, Tls,
@@ -10,7 +12,10 @@ use crate::{
 use axum::response::IntoResponse;
 use body::{RequestBody, Responder};
 use bytes::Bytes;
-use h3::{error::Code, server::RequestResolver};
+use h3::{
+    error::{Code, StreamError},
+    server::RequestResolver,
+};
 use http::{Method, Request, StatusCode};
 use quinn::{VarInt, crypto::rustls::QuicServerConfig};
 use std::{io, net::UdpSocket, sync::Arc, time::Duration};
@@ -21,12 +26,29 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
+use transport::Transport;
 
 /// How long a finished connection may send nothing before it is closed.
 const LINGER: Duration = Duration::from_secs(2);
 
 /// How long closing every connection may take once they are all told to close.
 const FAREWELL: Duration = Duration::from_secs(1);
+
+/// How much of a request a client may send before it is read. This is Quinn's default, which allows
+/// 100 Mbit/s over a round trip of 100 ms.
+const STREAM_WINDOW: u32 = 1_250_000;
+
+/// How much of all requests of a connection may be unread. Quinn has no limit by default, and for
+/// responses it has this one.
+const CONNECTION_WINDOW: u32 = 8 * STREAM_WINDOW;
+
+/// How many times larger than `Limits::head_bytes` an encoded head may be. h3 answers one that is
+/// decoded to more than that limit, and one that is not decoded gets no response.
+const ENCODED_HEAD: u64 = 2;
+
+/// How many request heads of a connection may fail to arrive before it is closed. h3 0.0.8 remembers
+/// each one until then (https://github.com/hyperium/h3/pull/365).
+const LOST_HEADS: u32 = 1_000;
 
 /// The QUIC endpoint and what its connections need.
 pub(crate) struct Http3 {
@@ -51,6 +73,10 @@ pub(crate) fn endpoint(
         .max_concurrent_bidi_streams(limits.concurrent_streams.into())
         // A client needs three: control and the two for QPACK. Others are ignored extensions.
         .max_concurrent_uni_streams(8_u8.into())
+        .stream_receive_window(STREAM_WINDOW.into())
+        .receive_window(CONNECTION_WINDOW.into())
+        // Nothing reads them.
+        .datagram_receive_buffer_size(None)
         .max_idle_timeout(Some(
             limits
                 .idle_timeout
@@ -58,13 +84,37 @@ pub(crate) fn endpoint(
                 .expect("`Limits::validate` refuses timeouts that QUIC cannot express"),
         ));
     config.transport_config(Arc::new(transport));
-    quinn::Endpoint::new(
+    #[cfg(target_os = "linux")]
+    let same_socket = socket.try_clone().map_err(stopped)?;
+    let endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
         Some(config),
         socket,
         Arc::new(quinn::TokioRuntime),
     )
-    .map_err(stopped)
+    .map_err(stopped)?;
+    #[cfg(target_os = "linux")]
+    receive_packets_apart(&same_socket).map_err(stopped)?;
+    Ok(endpoint)
+}
+
+/// Turn off that Linux hands over many packets as one, which Quinn turns on.
+///
+/// Quinn keeps all of them in memory for as long as data from one is unread, and counts only that
+/// data. A client could otherwise make unread requests take many times their size.
+#[cfg(target_os = "linux")]
+fn receive_packets_apart(socket: &UdpSocket) -> io::Result<()> {
+    use nix::sys::socket::{getsockopt, setsockopt, sockopt::UdpGroSegment};
+
+    // Linux before 5.0 does not have it, and then this fails.
+    let turned_off = setsockopt(socket, UdpGroSegment, &false);
+    match getsockopt(socket, UdpGroSegment) {
+        Ok(true) => Err(turned_off.err().map_or_else(
+            || io::Error::other("UDP receive offload stays on"),
+            io::Error::from,
+        )),
+        Ok(false) | Err(_) => Ok(()),
+    }
 }
 
 fn stopped(source: io::Error) -> Error {
@@ -101,11 +151,8 @@ impl Http3 {
                 Some(incoming) = self.endpoint.accept() => incoming.refuse(),
             }
         }
-        let code = VarInt::from_u64(Code::H3_NO_ERROR.value());
-        self.endpoint.close(
-            code.expect("HTTP/3 codes fit a QUIC integer"),
-            b"shutting down",
-        );
+        self.endpoint
+            .close(code(Code::H3_NO_ERROR), b"shutting down");
         let _ = timeout(FAREWELL, self.endpoint.wait_idle()).await;
         result
     }
@@ -145,6 +192,10 @@ impl Http3 {
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+fn code(code: Code) -> VarInt {
+    VarInt::from_u64(code.value()).expect("HTTP/3 codes fit a QUIC integer")
+}
+
 struct QuicConnection {
     app: axum::Router,
     limits: Limits,
@@ -161,7 +212,10 @@ impl QuicConnection {
                 // h3 has no limit by default, which lets a small request decode to a huge one
                 // (https://github.com/hyperium/h3/issues/379).
                 .max_field_section_size(self.limits.head_bytes.into())
-                .build(h3_quinn::Connection::new(quic.clone()))
+                .build(Transport::new(
+                    quic.clone(),
+                    u64::from(self.limits.head_bytes) * ENCODED_HEAD,
+                ))
                 .await?;
             Ok::<_, BoxError>((quic, connection))
         };
@@ -169,6 +223,7 @@ impl QuicConnection {
 
         // Dropping the set aborts requests whose connection is gone.
         let mut requests = JoinSet::new();
+        let mut lost_heads = 0;
         let mut draining = false;
         loop {
             let accepted = {
@@ -181,7 +236,14 @@ impl QuicConnection {
                         accepted = &mut accept => break Some(accepted?),
                         () = self.stop.cancelled(), if !draining => break None,
                         // A panicking handler ends its own request only.
-                        Some(_) = requests.join_next() => {}
+                        Some(ended) = requests.join_next() => {
+                            if let Ok(Head::Lost) = ended {
+                                lost_heads += 1;
+                            }
+                            if lost_heads > LOST_HEADS && !draining {
+                                break None;
+                            }
+                        }
                         () = linger(&quic), if draining && requests.is_empty() => return Ok(()),
                     }
                 }
@@ -229,32 +291,64 @@ async fn linger(quic: &quinn::Connection) {
     }
 }
 
-/// Tell the client that it can safely repeat this request elsewhere.
-async fn reject_request(
-    resolver: RequestResolver<h3_quinn::Connection, Bytes>,
+type Resolver = RequestResolver<Transport, Bytes>;
+type RequestStream = h3::server::RequestStream<transport::Request, Bytes>;
+
+/// What became of the head of a request.
+enum Head {
+    Arrived,
+    /// It is incomplete, and h3 does not forget the request.
+    Lost,
+}
+
+/// Read the head of a request. Without one, the request has been answered as far as possible.
+async fn resolve(
+    resolver: Resolver,
     head_timeout: Duration,
-) {
-    if let Ok(Ok((_, mut stream))) = timeout(head_timeout, resolver.resolve_request()).await {
-        stream.stop_stream(Code::H3_REQUEST_REJECTED);
+) -> Result<(Request<()>, RequestStream), Head> {
+    let error = match timeout(head_timeout, resolver.resolve_request()).await {
+        Ok(Ok(request)) => return Ok(request),
+        Ok(Err(error)) => error,
+        Err(_) => {
+            tracing::debug!("an HTTP/3 request head did not arrive in time");
+            return Err(Head::Lost);
+        }
+    };
+    tracing::debug!(%error, "an HTTP/3 request head was refused");
+    Err(match error {
+        StreamError::HeaderTooBig { .. } => Head::Arrived,
+        StreamError::StreamError { code, .. } if code == Code::H3_MESSAGE_ERROR => Head::Arrived,
+        _ => Head::Lost,
+    })
+}
+
+/// Tell the client that it can safely repeat this request elsewhere.
+async fn reject_request(resolver: Resolver, head_timeout: Duration) -> Head {
+    match resolve(resolver, head_timeout).await {
+        Ok((_, mut stream)) => {
+            stream.stop_stream(Code::H3_REQUEST_REJECTED);
+            Head::Arrived
+        }
+        Err(head) => head,
     }
 }
 
-async fn serve_request(
-    app: Connection,
-    resolver: RequestResolver<h3_quinn::Connection, Bytes>,
-    head_timeout: Duration,
-) {
-    if let Err(error) = try_serve_request(app, resolver, head_timeout).await {
+async fn serve_request(app: Connection, resolver: Resolver, head_timeout: Duration) -> Head {
+    let (head, stream) = match resolve(resolver, head_timeout).await {
+        Ok(request) => request,
+        Err(head) => return head,
+    };
+    if let Err(error) = respond(app, head, stream).await {
         tracing::debug!(error, "an HTTP/3 request ended early");
     }
+    Head::Arrived
 }
 
-async fn try_serve_request(
+async fn respond(
     app: Connection,
-    resolver: RequestResolver<h3_quinn::Connection, Bytes>,
-    head_timeout: Duration,
+    head: Request<()>,
+    stream: RequestStream,
 ) -> Result<(), BoxError> {
-    let (head, stream) = timeout(head_timeout, resolver.resolve_request()).await??;
     let (send, receive) = stream.split();
     let responder = Responder::new(send);
     let (parts, ()) = head.into_parts();
@@ -274,4 +368,19 @@ async fn try_serve_request(
         response
     };
     responder.send(head::prepare(response), to_head).await
+}
+
+#[cfg(all(test, target_os = "linux", feature = "self-signed"))]
+mod tests {
+    use super::*;
+    use nix::sys::socket::{getsockopt, sockopt::UdpGroSegment};
+
+    #[tokio::test]
+    async fn packets_are_received_apart() {
+        let socket = crate::listener::udp(([127, 0, 0, 1], 0).into()).unwrap();
+        let same_socket = socket.try_clone().unwrap();
+        let tls = Tls::self_signed(["localhost"]).unwrap();
+        let _endpoint = endpoint(socket, &tls, &Limits::default()).unwrap();
+        assert_ne!(getsockopt(&same_socket, UdpGroSegment), Ok(true));
+    }
 }
