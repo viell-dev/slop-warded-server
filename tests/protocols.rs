@@ -9,6 +9,7 @@ use axum::{
         ConnectInfo, Request,
         ws::{Message, WebSocketUpgrade},
     },
+    handler::HandlerWithoutStateExt,
     http::{HeaderMap, HeaderValue, StatusCode, Version, header},
     response::{IntoResponse, Response},
     routing::{any, get as axum_get, post},
@@ -246,6 +247,34 @@ async fn a_service_without_a_router_gets_the_same_heads() {
         }
     }
     serving.abort();
+}
+
+#[tokio::test]
+async fn a_layer_sees_what_a_handler_would_answer_to_get() {
+    async fn page() -> &'static str {
+        "abc"
+    }
+
+    let authority = Authority::new();
+    let routes = Router::new().route(exact_path("/"), page.into_service());
+    // Stands for compression: the content has another length afterwards.
+    let twice = axum::middleware::map_response(|response: Response| async {
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        body.repeat(2)
+    });
+    let running = Running::start(common::server(&authority), app(routes).layer(twice));
+    for version in VERSIONS {
+        for (method, body) in [("GET", "abcabc"), ("HEAD", "")] {
+            let mut client = Client::connect(version, running.https, &authority)
+                .await
+                .unwrap();
+            let request = request(method, "/", Body::empty());
+            let response = client.send(request).await.unwrap();
+            let length = &response.headers()[header::CONTENT_LENGTH];
+            assert_eq!(length, "6", "{version:?} {method}");
+            assert_eq!(text(response).await.unwrap(), body, "{version:?} {method}");
+        }
+    }
 }
 
 #[tokio::test]

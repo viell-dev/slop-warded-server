@@ -3,7 +3,10 @@ use axum::{
     body::Body,
     http::{
         Request, StatusCode,
-        header::{ACCEPT_LANGUAGE, CONTENT_LANGUAGE, CONTENT_TYPE, VARY},
+        header::{
+            ACCEPT_ENCODING, ACCEPT_LANGUAGE, CONTENT_ENCODING, CONTENT_LANGUAGE, CONTENT_TYPE,
+            VARY,
+        },
     },
     response::Response,
 };
@@ -33,6 +36,24 @@ async fn the_home_page_follows_the_visitor() {
             html.contains(&format!("<html lang=\"{expected}\">")),
             "{html}"
         );
+    }
+}
+
+#[tokio::test]
+async fn head_has_the_head_of_get() {
+    for uri in ["/", "/none"] {
+        let send = async |method: &str| {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(ACCEPT_ENCODING, "br")
+                .body(Body::empty())
+                .unwrap();
+            app().unwrap().oneshot(request).await.unwrap()
+        };
+        let (get, head) = (send("GET").await, send("HEAD").await);
+        assert_eq!(get.headers()[CONTENT_ENCODING], "br", "{uri}");
+        assert_eq!(get.headers(), head.headers(), "{uri}");
     }
 }
 

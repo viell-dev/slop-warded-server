@@ -8,7 +8,7 @@ description: "Add logging, compression, panic handling, timeouts, body limits an
 `website` templates start with these, from the outside in:
 
 ```rust
-use axum::{body::Body, http::Request, routing::any};
+use axum::{body::Body, handler::HandlerWithoutStateExt, http::Request};
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{catch_panic::CatchPanicLayer, compression::CompressionLayer, trace::TraceLayer};
 use warded_server::warded::{
@@ -22,7 +22,7 @@ async fn broken() -> &'static str {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let routes = Router::new().route(get().and(exact_path("/")), any(broken));
+    let routes = Router::new().route(get().and(exact_path("/")), broken.into_service());
     let middleware = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
@@ -37,9 +37,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 - **`TraceLayer`** logs each request with its method, URI, protocol, status and duration.
-- **`CompressionLayer`** compresses responses that clients accept compressed. It does not see what a
-  response to HEAD would contain, so its head differs from that for GET
-  ([#7](https://github.com/viell-dev/slop-warded-server/issues/7)).
+- **`CompressionLayer`** compresses responses that clients accept compressed. Give it [handlers as
+  services](#the-response-to-head), as here and in the templates.
 - **`CatchPanicLayer`** turns a panic into a 500. Without it the request fails without a response;
   other requests are not affected either way.
 
@@ -48,6 +47,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - On **the router that `app` returns**, it runs for every request, before a route is selected. It
   also sees requests that no route selects, and can change what the routes see.
 - On **a destination**, as in `any(handler).layer(…)`, it runs when that route is selected.
+
+## The response to HEAD
+
+A response to HEAD has the head that GET would get, and no content. `any(handler)` takes the content
+off itself, so a layer on the router no longer sees it: `CompressionLayer` leaves the response alone,
+and its `Content-Length` is not the one for GET. `handler.into_service()`, or
+`handler.with_state(state)`, keeps the content, and the server takes it off after all layers. Both
+need a trait from `axum::handler`: `HandlerWithoutStateExt` or `Handler`.
+
+Use them for routes that answer HEAD inside such a layer. Files from `ServeDir` have no content for
+HEAD in any case, and their `Content-Length` is that of the file, also where GET gets it compressed.
 
 ## Timeouts
 
