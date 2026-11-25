@@ -251,6 +251,29 @@ async fn a_truncated_http3_body_leaves_its_connection_usable() {
 }
 
 #[tokio::test]
+async fn dropping_a_partly_read_http3_body_does_not_fail_the_request() {
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(|request: axum::extract::Request| async {
+        // Leaves the second piece in h3's buffer, where it hides that a read is in progress.
+        let mut body = request.into_body();
+        let first = chunk(&mut body).await.unwrap();
+        assert_eq!(first, "first");
+        "enough"
+    });
+    let running = Running::start(common::server(&authority), app);
+    let client = common::http3(running.https, &authority).await.unwrap();
+    let (mut send, mut receive) = client.quic.open_bi().await.unwrap();
+    let request = [
+        headers_frame("POST", "/", &[]),
+        frame(DATA, 5, b"first"),
+        frame(DATA, 6, b"second"),
+    ];
+    send.write_all(&request.concat()).await.unwrap();
+    let response = common::soon(receive.read_to_end(1024)).await.unwrap();
+    assert!(has_status(&response, StatusCode::OK), "{response:02x?}");
+}
+
+#[tokio::test]
 async fn a_failed_response_body_is_not_a_complete_one() {
     let authority = Authority::new();
     let app = axum::Router::new().fallback(|| async {

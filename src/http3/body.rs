@@ -100,17 +100,16 @@ impl HttpBody for RequestBody {
 }
 
 impl Drop for RequestBody {
-    /// Ask the client to stop sending what nothing will read.
+    /// Notice the end of a body that the application did not read, usually an empty one.
+    ///
+    /// Quinn otherwise asks the client to stop sending it. It does so with a code that HTTP/3
+    /// does not define, which clients must take for `H3_NO_ERROR` (RFC 9114 section 8). That
+    /// code cannot be sent itself: h3-quinn 0.0.10 panics when asked to stop a stream with a read
+    /// in progress (https://github.com/hyperium/h3/issues/361), and does not say if there is one.
     fn drop(&mut self) {
-        if self.next != Next::Data || std::thread::panicking() {
-            return;
-        }
-        // Usually there was no body and its end has arrived, so this finds nothing to stop. h3
-        // panics when asked to stop a stream with a read in progress
-        // (https://github.com/hyperium/h3/issues/361); then dropping the stream stops it.
-        let mut cx = Context::from_waker(Waker::noop());
-        if let Poll::Ready(Ok(Some(_))) = self.stream.poll_recv_data(&mut cx) {
-            self.stream.stop_sending(Code::H3_NO_ERROR);
+        if self.next == Next::Data && !std::thread::panicking() {
+            let mut cx = Context::from_waker(Waker::noop());
+            let _ = self.stream.poll_recv_data(&mut cx);
         }
     }
 }
