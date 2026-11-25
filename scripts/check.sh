@@ -9,7 +9,7 @@ version="${version##*[@#]}"
 version="${version%$'\r'}"
 
 # Everything that names the release to install names this one.
-for file in README.md templates/*/Cargo.toml; do
+for file in README.md templates/*/Cargo.toml.liquid; do
     others="$(grep --extended-regexp --only-matching \
         '(tag = "|--tag )[0-9][^"` ]*' "$file" | grep --invert-match --extended-regexp \
         "(tag = \"|--tag )${version//./\\.}$" || true)"

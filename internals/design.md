@@ -20,7 +20,9 @@ project is meant to change: its routes, middleware and handlers. `cargo-generate
 questions and fills in templates, like `npm create`, and takes them from directories of this
 repository. One commit then changes and checks the library and the templates together.
 
-The templates depend on the library by release tag, because it has no registry release.
+The templates depend on the library by release tag, because it has no registry release. Their
+manifests are named `Cargo.toml.liquid`, which `cargo-generate` renames: Cargo searches a Git
+dependency for manifests, and warns in every project about ones that still hold placeholders.
 
 ## Which libraries
 
