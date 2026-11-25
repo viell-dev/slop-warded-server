@@ -4,10 +4,10 @@ description: "Serve a built React, Vue, Svelte, Angular or WebAssembly app toget
 
 # A single-page app
 
-A single-page app is a set of files that a build tool writes: an `index.html`, and scripts and styles
-with generated names. The browser runs it and asks an API for data. This page serves both from one
-server. It works for Vite (React, Vue, Svelte), Angular, Trunk (Yew, Leptos in the browser) and others
-that produce such files. It does not run JavaScript on the server.
+A single-page app is a set of files that a build tool writes: an `index.html`, and scripts and
+styles with generated names. The browser runs it and asks an API for data. This page serves both
+from one server. It works for Vite (React, Vue, Svelte), Angular, Trunk (Yew, Leptos in the browser)
+and others that produce such files. It does not run JavaScript on the server.
 
 ## The server
 
@@ -18,13 +18,20 @@ routes, in this order:
 2. the built files;
 3. `index.html` for every other page that a browser opens, because the app has its own routes.
 
-Add `fs` to the features of `tower-http` in `Cargo.toml` for the file services. The whole application:
+The file services need two more features of `tower-http`:
+
+```sh
+cargo add tower-http --features fs,set-header
+```
+
+The whole application:
 
 ```rust
 use axum::{
     Json, Router,
     body::Body,
     http::{HeaderValue, Request, StatusCode, header},
+    response::Response,
     routing::get as axum_get,
 };
 use http_body_util::BodyExt;
@@ -35,10 +42,18 @@ use tower_http::{
     set_header::SetResponseHeaderLayer,
 };
 use warded_server::warded::{
-    self, DefinitionError, Matcher,
-    matchers::{get, head, path},
-    negotiation::accepts_media_type,
+    self, DefinitionError, Matcher, match_fn,
+    matchers::{get, head},
+    negotiation::Offers,
 };
+
+/// Whether the path is this one or below it.
+fn under(prefix: &'static str) -> impl Matcher + Clone {
+    match_fn(move |head| {
+        let rest = head.uri().path().strip_prefix(prefix);
+        rest.is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
+}
 
 fn app(dist: &Path) -> Result<Router, DefinitionError> {
     let get_or_head = || get().or(head());
@@ -51,7 +66,12 @@ fn app(dist: &Path) -> Result<Router, DefinitionError> {
         .nest_service("/assets", ServeDir::new(dist.join("assets")))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::CACHE_CONTROL,
-            forever,
+            // Not for missing files, which a later build may bring back.
+            move |response: &Response| {
+                let found = response.status().is_success()
+                    || response.status() == StatusCode::NOT_MODIFIED;
+                found.then(|| forever.clone())
+            },
         ));
 
     // Browsers must ask whether this one changed, to find new names after an update.
@@ -63,10 +83,13 @@ fn app(dist: &Path) -> Result<Router, DefinitionError> {
             revalidate,
         ));
 
+    // Browsers prefer HTML when they open a page. Requests from scripts, and for scripts, styles
+    // and images, take anything, so they choose the first offer.
+    let preferred = Offers::media_types(["application/octet-stream", "text/html"])?;
     let routes = warded::Router::new()
-        .route(path("/api/{*rest}")?, api)
-        .route(get_or_head().and(path("/assets/{*file}")?), assets)
-        .route(get_or_head().and(accepts_media_type("text/html")?), index);
+        .route(under("/api"), api)
+        .route(get_or_head().and(under("/assets")), assets)
+        .route(get_or_head().and(preferred.selected("text/html")?), index);
     Ok(warded_server::app(routes))
 }
 
@@ -87,7 +110,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // A mistake in the app's requests must not look like a page.
         ("/api/unknown", "application/json", StatusCode::NOT_FOUND, ""),
         ("/assets/old.js", "*/*", StatusCode::NOT_FOUND, ""),
+        ("/api", browser, StatusCode::NOT_FOUND, ""),
+        ("/assets/", browser, StatusCode::NOT_FOUND, ""),
         ("/settings", "application/json", StatusCode::NOT_FOUND, ""),
+        ("/settings", "*/*", StatusCode::NOT_FOUND, ""),
     ] {
         let request = Request::builder()
             .uri(uri)
@@ -95,14 +121,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .body(Body::empty())?;
         let response = app.clone().oneshot(request).await?;
         assert_eq!(response.status(), status, "{uri}");
+        if uri.starts_with("/assets/") {
+            let cached = response.headers().contains_key(header::CACHE_CONTROL);
+            assert_eq!(cached, status == StatusCode::OK, "{uri}");
+        }
         assert_eq!(response.into_body().collect().await?.to_bytes(), body);
     }
     Ok(())
 }
 ```
 
-The last route is limited to requests that accept HTML. Without that, a wrong address in the app's
-code gets `index.html` with a 200, which is hard to find.
+The last route is limited to requests that prefer HTML. Without that, a wrong address in the app's
+code gets `index.html` with a 200, which is hard to find. Programs such as curl, which take
+anything, get a 404 too, unless they send `Accept: text/html`.
+
+`app` goes into `src/routes.rs`, and `main` calls it with the directory of the build. The checks in
+the `main` above belong in a test.
+
+`get` is the name of a condition in `warded::matchers` and of a function in `axum::routing`. Import
+one of them under another name, as here, where you need both.
 
 Files at the top of the build, such as `favicon.ico`, need routes of their own, each with
 `Router::new().fallback_service(ServeFile::new(…))` as the destination.
@@ -129,12 +166,12 @@ guide](./json-api.md#call-it-from-a-browser-on-another-site).
 
 ## WebAssembly
 
-`ServeDir` sends `.wasm` files as `application/wasm`, which browsers require to start them while they
-download. Trunk writes its files next to `index.html` instead of in a directory; build with
+`ServeDir` sends `.wasm` files as `application/wasm`, which browsers require to start them while
+they download. Trunk writes its files next to `index.html` instead of in a directory; build with
 `trunk build --release --public-url /assets/` and copy everything except `index.html` to `assets`.
 
 ## Frameworks that render on the server
 
 Leptos and Dioxus applications are Axum routers, so they can be served like [any other Axum
-application](./existing-axum.md). That has not been tested with this server. Next.js, SvelteKit, Nuxt
-and others need their own JavaScript server; run that behind a proxy instead.
+application](./existing-axum.md). That has not been tested with this server. Next.js, SvelteKit,
+Nuxt and others need their own JavaScript server; run that behind a proxy instead.

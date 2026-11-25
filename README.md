@@ -36,10 +36,11 @@ Then run it:
 
 ```sh
 cargo run
-curl --insecure --http3 https://localhost:8443/
+curl --insecure https://localhost:8443/
 ```
 
-Without a certificate the server generates one that no client trusts, hence `--insecure`.
+Add `--http2` or, with a curl that supports it, `--http3-only`. The `api` template answers below
+`/notes`. Without a certificate the server generates one that no client trusts, hence `--insecure`.
 [Getting started] explains the steps, and how to add the server to a project of your own.
 
 ## Example

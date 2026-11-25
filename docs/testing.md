@@ -47,8 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 What the server adds to requests is missing here. Insert `TransportSecurity` for routes with
-`secured()` or `unsecure()`, which otherwise fail with a 500, and `ConnectInfo(address)` for handlers
-that take the client's address.
+`secured()` or `unsecure()`, which otherwise fail with a 500, and `ConnectInfo(address)` for
+handlers that take the client's address.
 
 ## Over real connections
 
@@ -93,4 +93,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 curl --insecure --include --http3-only https://localhost:8443/
 ```
 
-See [HTTP/3](./http3.md#check-that-it-works) for browsers.
+See [HTTP/3](./http3.md#check-that-it-works) for browsers. For HTTP/3 in automated tests, run curl,
+or use the `h3` and `h3-quinn` crates as [this project's own
+tests](https://github.com/viell-dev/slop-warded-server/blob/main/tests/common/mod.rs) do.

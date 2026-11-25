@@ -36,13 +36,18 @@ A resource module holds its types and handlers:
 
 ## Errors
 
-Every error is JSON with a status, such as `{"error":"there is no such note"}`. Handlers return a
+Errors are JSON with a status, such as `{"error":"there is no such note"}`. Handlers return a
 `Problem`, and `JsonBody` and `PathParams` are extractors that return one when the request is wrong:
 
 <<< ../templates/api/src/problem.rs
 
-Wrap other extractors that you use, such as Axum's `Query`, in the same way. Errors that the server
-or the middleware answer, such as a request head that is too large, are not JSON.
+Wrap other extractors that you use, such as Axum's `Query`, in the same way, and return `Problem`
+from middleware of your own. Errors that the server or the middleware answer, such as a request head
+that is too large, are not JSON.
+
+For typed ids, use a type that implements `Deserialize` in the fields of `NoteParams`. To name a new
+resource to the client, return its path in `Location`, as in
+`(StatusCode::CREATED, [(LOCATION, format!("/notes/{id}"))], Json(note))`.
 
 Run the tests with `cargo test`. They call the application directly, without a network; see
 [testing](./testing.md).
@@ -107,40 +112,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Require authentication on some routes
 
 A layer on a destination runs only when that route is selected. This one checks a bearer token
-before the handler runs:
+before the handler runs. In a project from the template, return a `Problem` in place of the plain
+response:
 
 ```rust
 use axum::{
     body::Body,
     extract::Request,
-    http::{StatusCode, header::AUTHORIZATION},
+    http::{
+        StatusCode,
+        header::{AUTHORIZATION, WWW_AUTHENTICATE},
+    },
     middleware::{Next, from_fn_with_state},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::any,
 };
+use std::{collections::HashSet, sync::Arc};
 use tower::ServiceExt;
 use warded_server::warded::{
     Matcher, Router,
     matchers::{exact_path, get},
 };
 
-/// The clients' tokens. Keep real ones outside the source, and compare them in constant time.
+/// The clients' tokens. Read real ones from outside the source, and store only hashes of them.
 #[derive(Clone)]
-struct Tokens(&'static [&'static str]);
+struct Tokens(Arc<HashSet<String>>);
 
 async fn require_token(
     axum::extract::State(tokens): axum::extract::State<Tokens>,
     request: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Response {
     let token = request
         .headers()
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
     match token {
-        Some(token) if tokens.0.contains(&token) => Ok(next.run(request).await),
-        _ => Err(StatusCode::UNAUTHORIZED),
+        Some(token) if tokens.0.contains(token) => next.run(request).await,
+        _ => (StatusCode::UNAUTHORIZED, [(WWW_AUTHENTICATE, "Bearer")]).into_response(),
     }
 }
 
@@ -160,7 +170,7 @@ fn app(tokens: Tokens) -> axum::Router {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = app(Tokens(&["secret"]));
+    let app = app(Tokens(Arc::new(HashSet::from(["secret".to_owned()]))));
     for (path, authorization, expected) in [
         ("/health", "", StatusCode::OK),
         ("/account", "", StatusCode::UNAUTHORIZED),
@@ -178,18 +188,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The server does not read `Authorization` in routes on purpose: a condition that fails moves on to
-the next route, which is not how access should be refused.
+Do not check access in a route's condition: when it fails, the next route is tried, instead of the
+request being refused.
 
 ## Versions of the API
 
 Put the version in the path, or let clients name it in a header. A route per version keeps the
 handlers apart:
 
+```sh
+cargo add tower-http --features set-header
+```
+
 ```rust
-use axum::{body::Body, http::Request, routing::any};
+use axum::{
+    body::Body,
+    http::{HeaderValue, Request, header::VARY},
+    routing::any,
+};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
+use tower_http::set_header::SetResponseHeaderLayer;
 use warded_server::warded::{
     Matcher, Router,
     matchers::{exact_path, get, header_eq},
@@ -205,7 +224,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         // Clients that name no version, or another one, get the oldest.
         .route(users(), any(|| async { "version 1" }));
-    let app = warded_server::app(routes);
+    // Tells caches to keep the versions apart.
+    let vary = SetResponseHeaderLayer::appending(VARY, HeaderValue::from_static("x-api-version"));
+    let app = warded_server::app(routes).layer(vary);
 
     for (version, expected) in [("2", "version 2"), ("1", "version 1")] {
         let request = Request::builder()
@@ -223,12 +244,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Browsers ask for permission first (CORS). `tower-http` answers for the whole application, so add its
 layer to what `warded_server::app` returns, where it also sees the `OPTIONS` requests that no route
-handles:
+handles. Allow every method and header that the app uses:
+
+```sh
+cargo add tower-http --features cors
+```
 
 ```rust
 use axum::{
     body::Body,
-    http::{HeaderValue, Method, Request, header},
+    http::{HeaderName, HeaderValue, Method, Request, header},
     routing::any,
 };
 use tower::ServiceExt;
@@ -243,8 +268,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = Router::new().route(get().and(exact_path("/")), any(|| async { "data" }));
     let cors = CorsLayer::new()
         .allow_origin(HeaderValue::from_static("https://app.example.com"))
-        .allow_methods([Method::GET, Method::POST])
-        .allow_headers([header::CONTENT_TYPE]);
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-api-version"),
+        ]);
     let app = warded_server::app(routes).layer(cors);
 
     let preflight = Request::builder()
@@ -262,7 +291,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Before others use it
 
-- **Body size.** Axum's extractors refuse bodies over 2 MB. Change that with
-  `axum::extract::DefaultBodyLimit` as a layer on a destination.
+- **Body size.** Axum's extractors refuse bodies over 2 MB. Change that on a destination, as in
+  `any(create).layer(DefaultBodyLimit::max(10_000)).with_state(state)`, with
+  `axum::extract::DefaultBodyLimit`.
 - **Time.** Add a timeout where handlers wait for something; see [middleware](./middleware.md).
 - **Deployment.** See [certificates](./certificates.md) and [deployment](./deployment.md).

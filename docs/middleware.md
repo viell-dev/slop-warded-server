@@ -55,6 +55,10 @@ The server limits how long a client may take to send a request head, and leaves 
 because an event stream and a JSON endpoint need different limits. `TimeoutLayer` limits the time
 until the response begins, so it does not end streams:
 
+```sh
+cargo add tower-http --features timeout
+```
+
 ```rust
 use axum::{
     body::Body,
@@ -92,11 +96,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The server limits connections, and requests on one connection. To limit how many requests use
 something expensive at the same time, put `tower::limit::GlobalConcurrencyLimitLayer` on those
-destinations, and create it once so that they share it.
+destinations, and create it once so that they share it. It needs the `limit` feature of `tower`.
 
 ## Security headers
 
 Nothing is added by default, because some of them are hard to take back. Common ones:
+
+```sh
+cargo add tower-http --features set-header
+```
 
 ```rust
 use axum::{
@@ -130,6 +138,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+In a template's `ServiceBuilder`, put them before `CatchPanicLayer`, so that the responses it makes
+have them too.
 
 `Strict-Transport-Security` tells browsers to use only HTTPS with your host name for as long as it
 says. Add it once HTTPS works for good, and never while you develop on `localhost`, where it would

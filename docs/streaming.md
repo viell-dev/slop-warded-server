@@ -10,11 +10,16 @@ such as `String`, `Bytes` or `Json` does it.
 
 ## Server-sent events
 
-A response that stays open and sends events to the browser as they happen:
+```sh
+cargo add futures-util tokio-util
+```
+
+A response that stays open and sends events to the browser as they happen, until the server stops:
 
 ```rust
 use axum::{
     body::Body,
+    extract::State,
     http::{Request, header::CONTENT_TYPE},
     response::sse::{Event, KeepAlive, Sse},
     routing::any,
@@ -25,23 +30,46 @@ use futures_util::{
 };
 use http_body_util::BodyExt;
 use std::convert::Infallible;
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use warded_server::warded::{
     Matcher, Router,
     matchers::{exact_path, get},
 };
 
-async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+async fn events(
+    State(stopping): State<CancellationToken>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let numbers = stream::iter(1..=3).map(|n| Ok(Event::default().data(n.to_string())));
+    let events = numbers.take_until(stopping.cancelled_owned());
     // Comments in between tell the client, and everything on the way, that it is still open.
-    Sse::new(numbers).keep_alive(KeepAlive::default())
+    Sse::new(events).keep_alive(KeepAlive::default())
+}
+
+fn app(stopping: CancellationToken) -> axum::Router {
+    let routes = Router::new().route(
+        get().and(exact_path("/events")),
+        any(events).with_state(stopping),
+    );
+    warded_server::app(routes)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let routes = Router::new().route(get().and(exact_path("/events")), any(events));
+    let stopping = CancellationToken::new();
+    // `serve` listens for the same signals, and any number of tasks can.
+    tokio::spawn({
+        let stopping = stopping.clone();
+        async move {
+            warded_server::shutdown().await;
+            stopping.cancel();
+        }
+    });
+    let app = app(stopping);
+    // Then: Server::from_env()?.serve(app).await
+
     let request = Request::builder().uri("/events").body(Body::empty())?;
-    let response = warded_server::app(routes).oneshot(request).await?;
+    let response = app.oneshot(request).await?;
     assert_eq!(response.headers()[CONTENT_TYPE], "text/event-stream");
     let body = response.into_body().collect().await?.to_bytes();
     assert_eq!(body, "data: 1\n\ndata: 2\n\ndata: 3\n\n");
@@ -49,17 +77,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+Without the token, an open event stream keeps a shutdown waiting for the whole grace period.
+
 `CompressionLayer` leaves event streams alone. A timeout for whole responses would end them; see
 [middleware](./middleware.md#timeouts).
 
 When the client leaves, the stream is dropped: over HTTP/1.1 and HTTP/2 at once, and over HTTP/3
-when something is sent next, or the connection ends. Open event streams also keep a shutdown waiting
-until the grace period ends, so end them yourself when the application stops, for example with a
-`tokio_util::sync::CancellationToken`.
+when something is sent next, or the connection ends.
 
 ## Uploads
 
 Read the body piece by piece, and decide how much you accept:
+
+```sh
+cargo add http-body-util tempfile
+cargo add tokio --features fs,io-util
+```
 
 ```rust
 use axum::{
@@ -127,6 +160,10 @@ short one.
 
 They work over HTTP/1.1, which is what browsers use for them on this server. Use Axum's
 `WebSocketUpgrade` in a route:
+
+```sh
+cargo add axum --features ws
+```
 
 ```rust
 use axum::{
