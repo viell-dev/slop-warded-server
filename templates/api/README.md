@@ -11,8 +11,10 @@ curl --insecure https://localhost:8443/notes
 
 ## Layout
 
-- `src/main.rs`: the routes, the middleware and the server.
+- `src/main.rs`: starts the server.
+- `src/routes.rs`: the routes and the middleware, with their tests below.
 - `src/notes.rs`: an example resource, kept in memory. Replace it with yours.
+- `src/problem.rs`: errors as JSON.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 //! An example resource, kept in memory until the process ends. Replace it with yours.
 
-use crate::Problem;
+use crate::problem::Problem;
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::{
