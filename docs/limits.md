@@ -42,6 +42,7 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 | Authentication and sessions              | [Middleware or handlers](./json-api.md#require-authentication-on-some-routes) |
 | CORS and security headers                | [Middleware](./middleware.md#security-headers)                         |
 | Compression, logging, 500 for panics     | [Middleware](./middleware.md), in the `api` and `website` templates    |
+| Trust in a proxy that ends TLS           | [Middleware](./deployment.md#a-proxy-that-ends-tls)                    |
 | Databases, background work, e-mail       | Libraries of your choice                                               |
 
 ## Not supported yet
@@ -49,8 +50,6 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 - **Obtaining certificates.** Bring your own, for example from
   [Certbot](./certificates.md#for-the-public)
   ([#4](https://github.com/viell-dev/slop-warded-server/issues/4)).
-- **Trusting a proxy that ends TLS.** Requests on the cleartext listener count as insecure, and have
-  the proxy's address ([#5](https://github.com/viell-dev/slop-warded-server/issues/5)).
 - **More than one certificate or HTTPS address** in one server.
 - **WebSockets over HTTP/2.** They work over HTTP/1.1.
 - **HEAD with compression.** Layers around the application see the response to HEAD after its body

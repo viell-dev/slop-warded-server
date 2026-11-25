@@ -2,6 +2,11 @@
 
 Versions follow [Semantic Versioning](https://semver.org). Any prerelease may break compatibility.
 
+## Unreleased
+
+- The [deployment guide](https://viell-dev.github.io/slop-warded-server/deployment.html) shows how an
+  application can trust a proxy that ends TLS.
+
 ## 0.1.0-alpha.1 - 2026-11-25
 
 The first version, for trying it out. It is not for the open internet: HTTP/3 has
