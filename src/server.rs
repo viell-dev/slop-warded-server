@@ -151,10 +151,16 @@ impl Server {
         S::Response: IntoResponse,
         S::Future: Send + 'static,
     {
-        let _reload = signal::reload_on_hangup(&self.tls);
-        self.bind()?
-            .run(app, signal::shutdown(), signal::shutdown())
-            .await
+        let tls = self.tls.clone();
+        let serving = self
+            .bind()?
+            .run(app, signal::shutdown(), signal::shutdown());
+        tokio::select! {
+            // First, so that the signal is handled before anything is served.
+            biased;
+            () = signal::reload_on_hangup(tls) => unreachable!("it never completes"),
+            result = serving => result,
+        }
     }
 
     #[cfg(feature = "http3")]

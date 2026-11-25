@@ -57,7 +57,9 @@ async fn respond(error: DispatchError<Infallible>) -> StatusCode {
 ///
 /// The fields of `T` are the capture names. Values are percent-decoded and then parsed, so a
 /// number in the path can be a number in `T`. A value that does not parse gets a 400 response.
-/// Axum's `Path` extractor does not see Warded's captures.
+/// Axum's `Path` extractor does not see Warded's captures. `T` is a struct or a map, also for a
+/// single capture. If its fields are not the names in the route's pattern, every request gets a 400
+/// response, and the reason is logged at the `debug` level.
 ///
 /// ```
 /// use serde::Deserialize;
@@ -107,11 +109,16 @@ where
                     .map_err(|_| ParamsRejection::Invalid(format!("`{name}` is not UTF-8")))
             })
             .collect::<Result<_, _>>()?;
-        let pairs =
-            serde_urlencoded::to_string(pairs).expect("pairs of strings are a valid query string");
-        serde_urlencoded::from_str(&pairs)
+        let query =
+            serde_urlencoded::to_string(&pairs).expect("pairs of strings are a valid query string");
+        let query = serde_urlencoded::Deserializer::new(form_urlencoded::parse(query.as_bytes()));
+        serde_path_to_error::deserialize(query)
             .map(Self)
-            .map_err(|error| ParamsRejection::Invalid(error.to_string()))
+            .map_err(|error| {
+                // Fields of `T` that are no captures of the route also end up here.
+                tracing::debug!(%error, ?pairs, "Params could not read the captures");
+                ParamsRejection::Invalid(error.to_string())
+            })
     }
 }
 

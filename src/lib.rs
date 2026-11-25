@@ -73,7 +73,7 @@ pub use limits::Limits;
 #[cfg(feature = "warded")]
 pub use routes::{Params, ParamsRejection, app};
 pub use server::{BoundServer, Server};
-pub use signal::shutdown;
+pub use signal::{reload_on_hangup, shutdown};
 pub use tls::Tls;
 
 #[cfg(all(doctest, feature = "warded"))]
