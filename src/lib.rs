@@ -1,23 +1,20 @@
 //! A ready-wired server for HTTP/1.1, HTTP/2 and HTTP/3.
 //!
-//! [`Server`] runs one application over TLS on TCP and QUIC, and [`app`] turns
-//! [Warded](https://docs.rs/warded) routes into such an application. An ordinary
-//! [`axum::Router`] or another infallible Tower service works as well.
+//! [`Server`] runs one application over TLS on TCP and QUIC. An [`axum::Router`] or another
+//! infallible Tower service is one:
 //!
 //! ```no_run
-//! use warded_server::{
-//!     Server,
-//!     axum::routing::any,
-//!     warded::{self, Matcher, matchers::{exact_path, get}},
-//! };
+//! use warded_server::{Server, axum::{Router, routing::get}};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), warded_server::Error> {
-//!     let routes = warded::Router::new()
-//!         .route(get().and(exact_path("/")), any(|| async { "Hello" }));
-//!     Server::from_env()?.serve(warded_server::app(routes)).await
+//!     let app = Router::new().route("/", get(|| async { "Hello" }));
+//!     Server::from_env()?.serve(app).await
 //! }
 //! ```
+//!
+//! With the `warded` feature, which is on by default, `app` makes one of
+//! [Warded](https://docs.rs/warded) routes.
 //!
 //! # Guides
 //!
@@ -29,7 +26,7 @@
 //! Every request has these extensions, whichever protocol carried it:
 //!
 //! - [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo), the client's address;
-//! - with the `warded` feature, [`warded::TransportSecurity`]: `Https` over TLS or QUIC and
+//! - with the `warded` feature, `warded::TransportSecurity`: `Https` over TLS or QUIC and
 //!   `Unsecure` on the cleartext listener. Headers from a proxy are never trusted.
 //!
 //! HTTP/2 and HTTP/3 requests have their host in the URI instead of a `Host` field.

@@ -44,7 +44,8 @@ pub struct Limits {
     ///
     /// Default: 10 seconds.
     pub handshake_timeout: Duration,
-    /// How long a client may take to send a request head.
+    /// How long a client may take to send a request head, on HTTP/2 only the first one of a
+    /// connection.
     ///
     /// An idle HTTP/1.1 connection is waiting for a head too, so this also closes those.
     ///

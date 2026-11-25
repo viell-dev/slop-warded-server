@@ -184,7 +184,6 @@ async fn an_ordinary_axum_application_works() {
 #[tokio::test]
 async fn responses_have_the_same_head_on_every_protocol() {
     let authority = Authority::new();
-    // A bare service, so that nothing but the server supplies HEAD and Content-Length handling.
     let hop_by_hop = |_: Request| async {
         let mut response = Response::new(Body::from("twelve bytes"));
         for (name, value) in [
@@ -224,6 +223,29 @@ async fn responses_have_the_same_head_on_every_protocol() {
             assert_eq!(text(response).await.unwrap(), expected, "{version:?}");
         }
     }
+}
+
+#[tokio::test]
+async fn a_service_without_a_router_gets_the_same_heads() {
+    let authority = Authority::new();
+    // Not a handler: Axum gives those HEAD and Content-Length handling of its own.
+    let app = tower::service_fn(|_: Request| async {
+        Ok::<_, std::convert::Infallible>(Response::new(Body::from("abc")))
+    });
+    let bound = common::server(&authority).bind().unwrap();
+    let address = bound.https_addr();
+    let serving = tokio::spawn(bound.serve_until(app, std::future::pending()));
+    for version in VERSIONS {
+        for (method, body) in [("GET", "abc"), ("HEAD", "")] {
+            let mut client = Client::connect(version, address, &authority).await.unwrap();
+            let request = request(method, "/", Body::empty());
+            let response = client.send(request).await.unwrap();
+            let length = &response.headers()[header::CONTENT_LENGTH];
+            assert_eq!(length, "3", "{version:?} {method}");
+            assert_eq!(text(response).await.unwrap(), body, "{version:?} {method}");
+        }
+    }
+    serving.abort();
 }
 
 #[tokio::test]

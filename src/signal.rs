@@ -7,37 +7,74 @@ use crate::Tls;
 /// On Unix that is Ctrl+C (`SIGINT`) or `SIGTERM`. On Windows it is Ctrl+C, Ctrl+Break, closing
 /// the console, or system shutdown.
 ///
+/// Any number of tasks can wait for it, also beside [`Server::serve`](crate::Server::serve).
+///
 /// # Panics
 ///
 /// When the operating system refuses to report signals, because the server could then only be
 /// stopped by killing it.
 pub async fn shutdown() {
+    ShutdownSignals::new().next().await;
+}
+
+/// The signals that ask the process to stop, from when this is made.
+pub(crate) struct ShutdownSignals {
+    #[cfg(unix)]
+    interrupt: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    terminate: tokio::signal::unix::Signal,
+    #[cfg(windows)]
+    interrupt: tokio::signal::windows::CtrlC,
+    #[cfg(windows)]
+    break_key: tokio::signal::windows::CtrlBreak,
+    #[cfg(windows)]
+    close: tokio::signal::windows::CtrlClose,
+    #[cfg(windows)]
+    system: tokio::signal::windows::CtrlShutdown,
+}
+
+impl ShutdownSignals {
     const EXPECTATION: &str = "the process can listen for shutdown signals";
 
     #[cfg(unix)]
-    {
+    pub(crate) fn new() -> Self {
         use tokio::signal::unix::{SignalKind, signal};
 
-        let mut interrupt = signal(SignalKind::interrupt()).expect(EXPECTATION);
-        let mut terminate = signal(SignalKind::terminate()).expect(EXPECTATION);
-        tokio::select! {
-            _ = interrupt.recv() => {}
-            _ = terminate.recv() => {}
+        Self {
+            interrupt: signal(SignalKind::interrupt()).expect(Self::EXPECTATION),
+            terminate: signal(SignalKind::terminate()).expect(Self::EXPECTATION),
         }
     }
+
     #[cfg(windows)]
-    {
+    pub(crate) fn new() -> Self {
         use tokio::signal::windows;
 
-        let mut interrupt = windows::ctrl_c().expect(EXPECTATION);
-        let mut break_key = windows::ctrl_break().expect(EXPECTATION);
-        let mut close = windows::ctrl_close().expect(EXPECTATION);
-        let mut system = windows::ctrl_shutdown().expect(EXPECTATION);
+        Self {
+            interrupt: windows::ctrl_c().expect(Self::EXPECTATION),
+            break_key: windows::ctrl_break().expect(Self::EXPECTATION),
+            close: windows::ctrl_close().expect(Self::EXPECTATION),
+            system: windows::ctrl_shutdown().expect(Self::EXPECTATION),
+        }
+    }
+
+    /// Wait for one more signal. One that arrived since the last wait counts.
+    #[cfg(unix)]
+    pub(crate) async fn next(&mut self) {
         tokio::select! {
-            _ = interrupt.recv() => {}
-            _ = break_key.recv() => {}
-            _ = close.recv() => {}
-            _ = system.recv() => {}
+            _ = self.interrupt.recv() => {}
+            _ = self.terminate.recv() => {}
+        }
+    }
+
+    /// Wait for one more signal. One that arrived since the last wait counts.
+    #[cfg(windows)]
+    pub(crate) async fn next(&mut self) {
+        tokio::select! {
+            _ = self.interrupt.recv() => {}
+            _ = self.break_key.recv() => {}
+            _ = self.close.recv() => {}
+            _ = self.system.recv() => {}
         }
     }
 }

@@ -152,13 +152,22 @@ impl Server {
         S::Future: Send + 'static,
     {
         let tls = self.tls.clone();
-        let serving = self
-            .bind()?
-            .run(app, signal::shutdown(), signal::shutdown());
+        let mut signals = signal::ShutdownSignals::new();
+        let (stop, force) = (CancellationToken::new(), CancellationToken::new());
+        let serving = self.bind()?.run(app, stop.cancelled(), force.cancelled());
+        let stopping = async {
+            // The same listener for both, so that neither is lost.
+            signals.next().await;
+            stop.cancel();
+            signals.next().await;
+            force.cancel();
+            std::future::pending::<()>().await;
+        };
         tokio::select! {
-            // First, so that the signal is handled before anything is served.
+            // Listen for signals before anything is served.
             biased;
             () = signal::reload_on_hangup(tls) => unreachable!("it never completes"),
+            () = stopping => unreachable!("it never completes"),
             result = serving => result,
         }
     }
@@ -232,8 +241,8 @@ impl BoundServer {
     ///
     /// Connections that are still open when the grace period ends are closed. WebSockets and
     /// other upgraded connections do not extend it: once everything else has finished, reading
-    /// from them or writing to them fails. To say goodbye on them, tell their handlers from
-    /// `shutdown`. Dropping the future does the same to all connections at once. Returns early
+    /// from them or writing to them fails, but a handler that does neither does not notice. To end
+    /// them properly, tell their handlers from `shutdown`. Dropping the future does the same to all connections at once. Returns early
     /// with the error if a listener fails.
     pub async fn serve_until<S>(
         self,
