@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Supersede older PR runs and keep a run for each non-PR trigger.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+      - name: Check the library
+        shell: bash
+        run: bash scripts/check.sh
+
+  templates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_GENERATE_VERSION: 0.26.0
+      # SHA-256 of cargo-generate-v0.26.0-x86_64-unknown-linux-musl.tar.gz, as GitHub reports it.
+      CARGO_GENERATE_SHA256: 20e5cc64a8bef8e37d657ca49c05f8be4ccda4ff0144ecbacfa694f4e46b791a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+      - name: Install pinned cargo-generate
+        run: |
+          archive="cargo-generate-v$CARGO_GENERATE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          mkdir "$RUNNER_TEMP/cargo-generate"
+          cd "$RUNNER_TEMP/cargo-generate"
+          curl --fail --silent --show-error --location --remote-name \
+            "https://github.com/cargo-generate/cargo-generate/releases/download/v$CARGO_GENERATE_VERSION/$archive"
+          echo "$CARGO_GENERATE_SHA256  $archive" | sha256sum --check
+          tar -xzf "$archive"
+          pwd >> "$GITHUB_PATH"
+      - name: Generate and check every template
+        run: bash scripts/check-templates.sh
+
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_DENY_VERSION: 0.20.2
+      # SHA-256 of cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz, as
+      # published beside that release asset.
+      CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Install pinned cargo-deny
+        run: |
+          archive="cargo-deny-$CARGO_DENY_VERSION-x86_64-unknown-linux-musl"
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/$archive.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$CARGO_DENY_VERSION/$archive.tar.gz"
+          echo "$CARGO_DENY_SHA256  $RUNNER_TEMP/$archive.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$archive" >> "$GITHUB_PATH"
+      - name: Check advisories, licenses, bans and sources
+        run: cargo-deny --locked check
+
+  ci:
+    if: always()
+    needs: [checks, templates, dependencies]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every check
+        env:
+          CHECK_RESULT: ${{ needs.checks.result }}
+          TEMPLATE_RESULT: ${{ needs.templates.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependencies.result }}
+        run: |
+          test "$CHECK_RESULT" = success && test "$TEMPLATE_RESULT" = success &&
+            test "$DEPENDENCY_RESULT" = success
