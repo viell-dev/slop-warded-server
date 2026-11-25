@@ -14,6 +14,9 @@ use std::time::Duration;
 /// limits.head_timeout = Duration::from_secs(10);
 /// ```
 ///
+/// [`Server::bind`](crate::Server::bind) refuses zeros, timeouts of more than a year, and more than
+/// 10 000 concurrent streams.
+///
 /// These bound the transport, not the application. Limit request bodies, handler time and
 /// concurrent handlers with Tower middleware, because a JSON endpoint, an upload and an event
 /// stream need different values.
@@ -25,6 +28,8 @@ pub struct Limits {
     /// Default: 10 000.
     pub connections: usize,
     /// Concurrent requests on one HTTP/2 or HTTP/3 connection.
+    ///
+    /// Every HTTP/3 connection takes memory for this many when it opens, about 100 bytes each.
     ///
     /// Default: 128.
     pub concurrent_streams: u32,
@@ -66,22 +71,29 @@ impl Default for Limits {
 }
 
 impl Limits {
-    /// QUIC sends timeouts as whole milliseconds in 62 bits, where 0 stands for none.
-    const LONGEST_IDLE_TIMEOUT: u128 = (1 << 62) - 1;
+    /// Enough for "no limit" in practice, and safe to add to a point in time.
+    const LONGEST_TIMEOUT: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
-    /// Refuse values with which the server could not serve anything.
+    /// QUIC prepares for every stream that a client may open when it connects.
+    const MOST_STREAMS: u32 = 10_000;
+
+    /// Refuse values with which the server could not serve anything, or only at great cost.
     pub(crate) fn validate(&self) -> Result<(), Error> {
-        let idle = self.idle_timeout.as_millis();
+        // QUIC counts whole milliseconds, and takes 0 for no timeout.
+        let timeout = Duration::from_millis(1)..=Self::LONGEST_TIMEOUT;
         for (field, usable) in [
             ("connections", self.connections > 0),
-            ("concurrent_streams", self.concurrent_streams > 0),
-            ("head_bytes", self.head_bytes > 0),
-            ("handshake_timeout", !self.handshake_timeout.is_zero()),
-            ("head_timeout", !self.head_timeout.is_zero()),
             (
-                "idle_timeout",
-                (1..=Self::LONGEST_IDLE_TIMEOUT).contains(&idle),
+                "concurrent_streams",
+                (1..=Self::MOST_STREAMS).contains(&self.concurrent_streams),
             ),
+            ("head_bytes", self.head_bytes > 0),
+            (
+                "handshake_timeout",
+                timeout.contains(&self.handshake_timeout),
+            ),
+            ("head_timeout", timeout.contains(&self.head_timeout)),
+            ("idle_timeout", timeout.contains(&self.idle_timeout)),
         ] {
             if !usable {
                 return Err(Error::Limit { field });
@@ -100,19 +112,32 @@ mod tests {
     #[test]
     fn only_usable_limits_are_accepted() {
         assert!(Limits::default().validate().is_ok());
-        let changes: [(&str, Change); 8] = [
+        let largest = Limits {
+            concurrent_streams: Limits::MOST_STREAMS,
+            handshake_timeout: Limits::LONGEST_TIMEOUT,
+            head_timeout: Limits::LONGEST_TIMEOUT,
+            idle_timeout: Limits::LONGEST_TIMEOUT,
+            ..Limits::default()
+        };
+        assert!(largest.validate().is_ok());
+
+        let changes: [(&str, Change); 10] = [
             ("connections", |limits| limits.connections = 0),
             ("concurrent_streams", |limits| limits.concurrent_streams = 0),
+            ("concurrent_streams", |limits| {
+                limits.concurrent_streams = u32::MAX
+            }),
             ("head_bytes", |limits| limits.head_bytes = 0),
             ("handshake_timeout", |limits| {
                 limits.handshake_timeout = Duration::ZERO
             }),
+            ("handshake_timeout", |limits| {
+                limits.handshake_timeout = Duration::MAX
+            }),
             ("head_timeout", |limits| {
                 limits.head_timeout = Duration::ZERO
             }),
-            ("idle_timeout", |limits| {
-                limits.idle_timeout = Duration::ZERO
-            }),
+            ("head_timeout", |limits| limits.head_timeout = Duration::MAX),
             ("idle_timeout", |limits| {
                 limits.idle_timeout = Duration::from_micros(1)
             }),

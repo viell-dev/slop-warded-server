@@ -42,7 +42,6 @@ accepted.
   but requests then count as insecure, because headers from a proxy are not trusted.
 - **More than one certificate or HTTPS address** in one server.
 - **WebSockets over HTTP/2.** They work over HTTP/1.1.
-
 - **HEAD with compression.** Layers around the application see the response to HEAD after its body
   is gone, so `CompressionLayer` leaves it alone, unlike the response to GET.
 
@@ -50,7 +49,6 @@ accepted.
 
 Nothing limits how long a client takes to send a request body or to read a response, as long as its
 connection is alive. Each such client holds a connection.
-
 
 The default [`Limits`](../src/limits.rs) are not tuned for any particular machine. An HTTP/2
 connection stays open as long as its client answers pings, so idle clients use up the connection
