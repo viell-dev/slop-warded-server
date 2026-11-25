@@ -90,3 +90,28 @@ async fn hangup_reloads_the_certificate_and_terminate_stops() {
     signal("-TERM");
     common::soon(serving).await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn hangup_is_harmless_without_certificate_files() {
+    let _signals = SIGNALS.lock().await;
+    let authority = Authority::new();
+    let bound = common::server(&authority).bind().unwrap();
+    let address: SocketAddr = bound.https_addr();
+    drop(bound);
+
+    let app = axum::Router::new().fallback(|| async { "fine" });
+    let tls = warded_server::Tls::self_signed(["localhost"]).unwrap();
+    let serving = tokio::spawn(warded_server::Server::new(tls).https(address).serve(app));
+    common::soon(async {
+        while tokio::net::TcpStream::connect(address).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    // Unhandled, this would end the test run.
+    signal("-HUP");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!serving.is_finished());
+    signal("-TERM");
+    common::soon(serving).await.unwrap().unwrap();
+}

@@ -133,6 +133,18 @@ async fn routing_failures_become_responses() {
 }
 
 #[tokio::test]
+async fn a_refused_capture_is_named() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), warded_app());
+    let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
+        .await
+        .unwrap();
+    let response = client.get("/orders/forty-two").await.unwrap();
+    let body = text(response).await.unwrap();
+    assert_eq!(body, "invalid path: id: invalid digit found in string\n");
+}
+
+#[tokio::test]
 async fn params_outside_a_warded_route_is_a_server_error() {
     let authority = Authority::new();
     let app = axum::Router::new().route("/", axum_get(|_: Params<Order>| async {}));

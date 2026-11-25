@@ -1,7 +1,6 @@
 //! What the operating system asks of the process.
 
 use crate::Tls;
-use tokio_util::task::AbortOnDropHandle;
 
 /// Completes when the process is asked to stop.
 ///
@@ -43,35 +42,39 @@ pub async fn shutdown() {
     }
 }
 
-/// Reload certificate files on `SIGHUP`, for as long as the returned handle lives.
-#[cfg(unix)]
-pub(crate) fn reload_on_hangup(tls: &Tls) -> Option<AbortOnDropHandle<()>> {
-    use tokio::signal::unix::{SignalKind, signal};
+/// Reload the certificate files whenever the process receives `SIGHUP`.
+///
+/// [`Server::serve`](crate::Server::serve) does this. Spawn it beside
+/// [`BoundServer::serve_until`](crate::BoundServer::serve_until) to have it there too; without it,
+/// `SIGHUP` ends the process. It never completes, and does nothing on Windows.
+pub async fn reload_on_hangup(tls: Tls) {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
 
-    if !tls.reloads() {
-        return None;
-    }
-    let mut hangup = match signal(SignalKind::hangup()) {
-        Ok(hangup) => hangup,
-        Err(error) => {
-            tracing::warn!(%error, "SIGHUP will not reload the certificate");
-            return None;
-        }
-    };
-    let tls = tls.clone();
-    Some(AbortOnDropHandle::new(tokio::spawn(async move {
-        while hangup.recv().await.is_some() {
-            let tls = tls.clone();
-            match tokio::task::spawn_blocking(move || tls.reload()).await {
-                Ok(Ok(())) => tracing::info!("reloaded the certificate"),
-                Ok(Err(error)) => tracing::error!(?error, "kept the previous certificate"),
-                Err(error) => tracing::error!(%error, "kept the previous certificate"),
+        match signal(SignalKind::hangup()) {
+            Ok(mut hangup) => {
+                while hangup.recv().await.is_some() {
+                    reload(tls.clone()).await;
+                }
             }
+            Err(error) => tracing::warn!(%error, "SIGHUP will not reload the certificate"),
         }
-    })))
+    }
+    #[cfg(not(unix))]
+    let _ = tls;
+    std::future::pending().await
 }
 
-#[cfg(not(unix))]
-pub(crate) fn reload_on_hangup(_: &Tls) -> Option<AbortOnDropHandle<()>> {
-    None
+#[cfg(unix)]
+async fn reload(tls: Tls) {
+    if !tls.reloads() {
+        tracing::info!("there are no certificate files to reload");
+        return;
+    }
+    match tokio::task::spawn_blocking(move || tls.reload()).await {
+        Ok(Ok(())) => tracing::info!("reloaded the certificate"),
+        Ok(Err(error)) => tracing::error!(?error, "kept the previous certificate"),
+        Err(error) => tracing::error!(%error, "kept the previous certificate"),
+    }
 }
