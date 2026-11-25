@@ -86,6 +86,11 @@ could otherwise lose the end of a response. It stops waiting when the client has
 five seconds, or after 30 seconds. At the end of an HTTP/3 connection the server waits until it has
 sent nothing for two seconds, or the client closes it, so that the last response is not lost.
 
+When a handler answers without reading the body of an HTTP/3 request, the server takes and discards
+the rest, because some clients could otherwise miss the response. It tells the client to stop when it
+has been silent for five seconds, or after 30 seconds. A shutdown waits for that within its grace
+period, before it closes the connection as above.
+
 ## Tested environments
 
 - **In CI:** Rust 1.99.1 on Linux and Windows, with real HTTP/1.1, HTTP/2 and HTTP/3 connections

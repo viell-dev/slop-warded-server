@@ -7,6 +7,7 @@ use super::{
     BoxError, code,
     frames::{FrameError, Frames},
 };
+use crate::linger::LINGER;
 use bytes::{Buf, Bytes};
 use h3::{
     error::Code,
@@ -16,11 +17,20 @@ use quinn::{ConnectionError, ReadError, WriteError};
 use std::{
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll, ready},
+    task::{Context, Poll, Waker, ready},
 };
+use tokio::{
+    runtime::Handle,
+    task::yield_now,
+    time::{Instant, timeout_at},
+};
+use tokio_util::task::{TaskTracker, task_tracker::TaskTrackerToken};
 
 /// How much to take from a stream at once. QUIC no longer counts it as unread, so it is small.
 const READ: usize = 4 * 1024;
+
+/// How often to take more before other tasks have their turn, when none of it is for h3.
+const READS: usize = 32;
 
 type Opening<T> = Pin<Box<dyn Future<Output = Result<T, ConnectionError>> + Send>>;
 
@@ -28,6 +38,7 @@ type Opening<T> = Pin<Box<dyn Future<Output = Result<T, ConnectionError>> + Send
 pub(super) struct Transport {
     quic: quinn::Connection,
     head_frame_bytes: u64,
+    bodies: Bodies,
     requests: Opening<(quinn::SendStream, quinn::RecvStream)>,
     unidirectional: Opening<quinn::RecvStream>,
     opening: Option<Opening<quinn::SendStream>>,
@@ -35,14 +46,40 @@ pub(super) struct Transport {
 
 impl Transport {
     /// `head_frame_bytes` is the longest frame on a request stream, other than a DATA frame.
-    pub(super) fn new(quic: quinn::Connection, head_frame_bytes: u64) -> Self {
+    pub(super) fn new(quic: quinn::Connection, head_frame_bytes: u64, bodies: Bodies) -> Self {
         Self {
             requests: accept_bi(&quic),
             unidirectional: accept_uni(&quic),
             opening: None,
             quic,
             head_frame_bytes,
+            bodies,
         }
+    }
+}
+
+/// The request bodies of a connection whose clients may not be done sending.
+#[derive(Clone)]
+pub(super) struct Bodies {
+    tracker: TaskTracker,
+    /// Where the rest of a body is discarded, wherever the application drops it.
+    runtime: Handle,
+}
+
+impl Bodies {
+    pub(super) fn new() -> Self {
+        let tracker = TaskTracker::new();
+        // This lets waiting end. It does not keep more bodies from being tracked.
+        tracker.close();
+        Self {
+            tracker,
+            runtime: Handle::current(),
+        }
+    }
+
+    /// Wait until there are none.
+    pub(super) async fn ended(&self) {
+        self.tracker.wait().await;
     }
 }
 
@@ -80,11 +117,16 @@ impl quic::Connection<Bytes> for Transport {
         Poll::Ready(Ok(Request {
             sender: Sender::new(sender),
             receiver: Receiver::new(receiver, Frames::request(self.head_frame_bytes)),
+            bodies: self.bodies.clone(),
         }))
     }
 
     fn opener(&self) -> Self {
-        Self::new(self.quic.clone(), self.head_frame_bytes)
+        Self::new(
+            self.quic.clone(),
+            self.head_frame_bytes,
+            self.bodies.clone(),
+        )
     }
 }
 
@@ -123,13 +165,17 @@ impl quic::OpenStreams<Bytes> for Transport {
 pub(super) struct Request {
     sender: Sender,
     receiver: Receiver,
+    bodies: Bodies,
 }
 
 impl quic::BidiStream<Bytes> for Request {
     type SendStream = Sender;
     type RecvStream = Receiver;
 
-    fn split(self) -> (Sender, Receiver) {
+    /// The head has arrived, and the receiver is for the body.
+    fn split(mut self) -> (Sender, Receiver) {
+        let token = self.bodies.tracker.token();
+        self.receiver.body = Some((token, self.bodies.runtime));
         (self.sender, self.receiver)
     }
 }
@@ -184,19 +230,36 @@ impl quic::SendStream<Bytes> for Request {
 
 /// The receiving direction of a stream.
 pub(super) struct Receiver {
-    stream: quinn::RecvStream,
+    /// Only dropping takes it.
+    stream: Option<quinn::RecvStream>,
     frames: Frames,
     /// What was taken from the stream and is after the piece that h3 is at.
     unread: Bytes,
+    /// For the body of a request, until the client is done or has been told to stop.
+    body: Option<(TaskTrackerToken, Handle)>,
 }
 
 impl Receiver {
     fn new(stream: quinn::RecvStream, frames: Frames) -> Self {
         Self {
-            stream,
+            stream: Some(stream),
             frames,
             unread: Bytes::new(),
+            body: None,
         }
+    }
+
+    fn poll_read(
+        &mut self,
+        cx: &mut Context<'_>,
+        data: &mut [u8],
+    ) -> Poll<Result<usize, ReadError>> {
+        let stream = self.stream.as_mut().expect("it is not dropped");
+        let read = ready!(stream.poll_read(cx, data));
+        if let Ok(0) | Err(_) = read {
+            self.body = None;
+        }
+        Poll::Ready(read)
     }
 }
 
@@ -207,7 +270,7 @@ impl quic::RecvStream for Receiver {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<Result<Option<Bytes>, StreamErrorIncoming>> {
-        loop {
+        for _ in 0..READS {
             match self.frames.next(&mut self.unread) {
                 Ok(None) => {}
                 Ok(piece) => return Poll::Ready(Ok(piece)),
@@ -218,21 +281,62 @@ impl quic::RecvStream for Receiver {
             }
             // Copied, because Quinn's own pieces keep the packets in memory that they came in.
             let mut data = [0; READ];
-            match ready!(self.stream.poll_read(cx, &mut data)).map_err(read_error)? {
+            match ready!(self.poll_read(cx, &mut data)).map_err(read_error)? {
                 0 => return Poll::Ready(self.frames.end().map_err(unknown)),
                 length => self.unread = Bytes::copy_from_slice(&data[..length]),
             }
         }
+        cx.waker().wake_by_ref();
+        Poll::Pending
     }
 
     fn stop_sending(&mut self, reason: u64) {
-        // A stream that has ended needs no more.
-        let _ = self.stream.stop(code(reason.into()));
+        self.body = None;
+        if let Some(stream) = &mut self.stream {
+            // A stream that has ended needs no more.
+            let _ = stream.stop(code(reason.into()));
+        }
     }
 
     fn recv_id(&self) -> StreamId {
-        id(self.stream.id())
+        id(self.stream.as_ref().expect("it is not dropped").id())
     }
+}
+
+impl Drop for Receiver {
+    /// Let the client finish a body that the application did not read.
+    fn drop(&mut self) {
+        if self.body.is_some() {
+            // Most requests have no body, and end with this.
+            let _ = self.poll_read(&mut Context::from_waker(Waker::noop()), &mut [0; READ]);
+        }
+        if let (Some((token, runtime)), Some(stream)) = (self.body.take(), self.stream.take()) {
+            let deadline = Instant::now() + LINGER.longest;
+            runtime.spawn(async move {
+                discard(stream, deadline).await;
+                drop(token);
+            });
+        }
+    }
+}
+
+/// Take what the client still sends, for a while, and then tell it to stop.
+///
+/// It may be told at once (RFC 9114 section 4.1), but curl and Chromium then fail or hang, although
+/// they get a complete response.
+async fn discard(mut stream: quinn::RecvStream, deadline: Instant) {
+    while Instant::now() < deadline {
+        let silence = Instant::now() + LINGER.silence;
+        // In order, because Quinn otherwise remembers every range that it has received, without a
+        // limit on their number.
+        let read = timeout_at(silence.min(deadline), stream.read_chunk(usize::MAX, true));
+        match read.await {
+            // Other tasks have their turn, however fast the client sends.
+            Ok(Ok(Some(_))) => yield_now().await,
+            _ => break,
+        }
+    }
+    let _ = stream.stop(code(Code::H3_NO_ERROR));
 }
 
 /// The sending direction of a stream.
@@ -334,5 +438,56 @@ fn write_error(error: WriteError) -> StreamErrorIncoming {
         },
         WriteError::ConnectionLost(error) => connection_lost(error),
         error => unknown(error),
+    }
+}
+
+#[cfg(all(test, feature = "self-signed"))]
+mod tests {
+    use super::*;
+    use crate::{Limits, Tls, http3::endpoint, listener};
+    use quinn::crypto::rustls::QuicClientConfig;
+    use rustls::RootCertStore;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn discarding_ends_however_fast_the_client_sends() {
+        let tls = Tls::self_signed(["localhost"]).unwrap();
+        let socket = listener::udp(([127, 0, 0, 1], 0).into()).unwrap();
+        let server = endpoint(socket, &tls, &Limits::default()).unwrap();
+
+        let mut roots = RootCertStore::empty();
+        roots.add(tls.certificate()).unwrap();
+        let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        config.alpn_protocols = vec![b"h3".to_vec()];
+        let config = QuicClientConfig::try_from(config).unwrap();
+        let config = quinn::ClientConfig::new(Arc::new(config));
+        let client = quinn::Endpoint::client(([127, 0, 0, 1], 0).into()).unwrap();
+        let connecting = client
+            .connect_with(config, server.local_addr().unwrap(), "localhost")
+            .unwrap();
+        let (connection, accepted) =
+            tokio::join!(connecting, async { server.accept().await.unwrap().await });
+        let (connection, accepted) = (connection.unwrap(), accepted.unwrap());
+
+        let (mut send, _receive) = connection.open_bi().await.unwrap();
+        let sending = tokio::spawn(async move {
+            while send.write_all(&[0; 100_000]).await.is_ok() {}
+            send.stopped().await
+        });
+        let (_send, receive) = accepted.accept_bi().await.unwrap();
+        let deadline = Instant::now() + Duration::from_millis(300);
+        timeout(Duration::from_secs(5), discard(receive, deadline))
+            .await
+            .unwrap();
+        assert!(Instant::now() >= deadline);
+        let stopped = timeout(Duration::from_secs(5), sending).await.unwrap();
+        assert_eq!(stopped.unwrap().unwrap(), Some(code(Code::H3_NO_ERROR)));
     }
 }

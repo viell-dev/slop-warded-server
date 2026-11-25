@@ -8,6 +8,13 @@ Versions follow [Semantic Versioning](https://semver.org). Any prerelease may br
   ([#3](https://github.com/viell-dev/slop-warded-server/issues/3)). Frames that declare too much are
   refused before they arrive, and a connection has at most 10 MB that handlers have not read yet.
   [Limits](https://viell-dev.github.io/slop-warded-server/limits.html#connections) adds it up.
+- HTTP/3 clients such as Chromium and curl get the response to an upload that the handler does not
+  read ([#15](https://github.com/viell-dev/slop-warded-server/issues/15)). The rest of the upload is
+  discarded, until the client has been silent for five seconds or for 30 seconds, and a shutdown waits
+  for that within its grace period, as it does for bodies that the application still has.
+- Over HTTP/3, the code with which a client is told to stop says why, and is no longer 0.
+- On Linux, UDP receive offload is turned off for HTTP/3, because of the memory that it can take. Fast
+  uploads are somewhat slower.
 - HTTP/3 request bodies may contain empty DATA frames.
 - `Limits::head_bytes` can be at most 512 KiB.
 - The [deployment guide](https://viell-dev.github.io/slop-warded-server/deployment.html) shows how an

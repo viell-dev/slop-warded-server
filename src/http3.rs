@@ -26,7 +26,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
-use transport::Transport;
+use transport::{Bodies, Transport};
 
 /// How long a finished connection may send nothing before it is closed.
 const LINGER: Duration = Duration::from_secs(2);
@@ -205,6 +205,7 @@ struct QuicConnection {
 
 impl QuicConnection {
     async fn serve(&self, incoming: quinn::Incoming) -> Result<(), BoxError> {
+        let bodies = Bodies::new();
         let handshake = async {
             let quic = incoming.accept()?.await?;
             // This waits until the client lets the server open its control stream.
@@ -215,6 +216,7 @@ impl QuicConnection {
                 .build(Transport::new(
                     quic.clone(),
                     u64::from(self.limits.head_bytes) * ENCODED_HEAD,
+                    bodies.clone(),
                 ))
                 .await?;
             Ok::<_, BoxError>((quic, connection))
@@ -244,7 +246,9 @@ impl QuicConnection {
                                 break None;
                             }
                         }
-                        () = linger(&quic), if draining && requests.is_empty() => return Ok(()),
+                        () = farewell(&quic, &bodies), if draining && requests.is_empty() => {
+                            return Ok(());
+                        }
                     }
                 }
             };
@@ -273,9 +277,15 @@ impl QuicConnection {
             }
         }
         while requests.join_next().await.is_some() {}
-        linger(&quic).await;
+        farewell(&quic, &bodies).await;
         Ok(())
     }
+}
+
+/// Wait until the client is done sending, and then as `linger` does.
+async fn farewell(quic: &quinn::Connection, bodies: &Bodies) {
+    bodies.ended().await;
+    linger(quic).await;
 }
 
 /// Wait until the client closes the connection, or has been sent everything.
@@ -326,6 +336,7 @@ async fn resolve(
 async fn reject_request(resolver: Resolver, head_timeout: Duration) -> Head {
     match resolve(resolver, head_timeout).await {
         Ok((_, mut stream)) => {
+            stream.stop_sending(Code::H3_REQUEST_REJECTED);
             stream.stop_stream(Code::H3_REQUEST_REJECTED);
             Head::Arrived
         }
@@ -349,12 +360,13 @@ async fn respond(
     head: Request<()>,
     stream: RequestStream,
 ) -> Result<(), BoxError> {
-    let (send, receive) = stream.split();
+    let (send, mut receive) = stream.split();
     let responder = Responder::new(send);
     let (parts, ()) = head.into_parts();
     let body = match head::content_length(&parts.headers) {
         Ok(length) => RequestBody::new(receive, length),
         Err(malformed) => {
+            receive.stop_sending(Code::H3_MESSAGE_ERROR);
             responder.reset(Code::H3_MESSAGE_ERROR);
             return Err(malformed.into());
         }

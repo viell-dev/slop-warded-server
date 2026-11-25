@@ -75,6 +75,12 @@ impl Tls {
         Ok(())
     }
 
+    /// The certificate that is presented now.
+    #[cfg(all(test, feature = "http3", feature = "self-signed"))]
+    pub(crate) fn certificate(&self) -> CertificateDer<'static> {
+        self.current.0.load().cert[0].clone()
+    }
+
     /// Whether [`Tls::reload`] has files to read.
     #[cfg(unix)]
     pub(crate) fn reloads(&self) -> bool {
