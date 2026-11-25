@@ -50,7 +50,12 @@ pub(crate) fn endpoint(
         .max_concurrent_bidi_streams(limits.concurrent_streams.into())
         // A client needs three: control and the two for QPACK. Others are ignored extensions.
         .max_concurrent_uni_streams(8_u8.into())
-        .max_idle_timeout(limits.idle_timeout.try_into().ok());
+        .max_idle_timeout(Some(
+            limits
+                .idle_timeout
+                .try_into()
+                .expect("`Limits::validate` refuses timeouts that QUIC cannot express"),
+        ));
     config.transport_config(Arc::new(transport));
     quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
@@ -168,12 +173,18 @@ impl QuicConnection {
             tokio::select! {
                 () = self.stop.cancelled(), if !draining => {
                     draining = true;
-                    connection.shutdown(0).await?;
+                    // The GOAWAY that this sends tells the client that requests from its number
+                    // on are not processed. With 0, h3 names the last request that it accepted.
+                    connection.shutdown(1).await?;
                 }
                 // A panicking handler ends its own request only.
                 Some(_) = requests.join_next() => {}
                 () = linger(&quic), if draining && requests.is_empty() => return Ok(()),
                 accepted = connection.accept() => match accepted? {
+                    // h3 itself rejects only the ones after the number in the GOAWAY.
+                    Some(resolver) if draining => {
+                        requests.spawn(reject_request(resolver, self.limits.head_timeout));
+                    }
                     Some(resolver) => {
                         let app = Connection::new(
                             self.app.clone(),
@@ -204,6 +215,16 @@ async fn linger(quic: &quinn::Connection) {
         if timeout(LINGER, quic.closed()).await.is_ok() || quic.stats().frame_tx.stream == sent {
             return;
         }
+    }
+}
+
+/// Tell the client that it can safely repeat this request elsewhere.
+async fn reject_request(
+    resolver: RequestResolver<h3_quinn::Connection, Bytes>,
+    head_timeout: Duration,
+) {
+    if let Ok(Ok((_, mut stream))) = timeout(head_timeout, resolver.resolve_request()).await {
+        stream.stop_stream(Code::H3_REQUEST_REJECTED);
     }
 }
 

@@ -265,16 +265,16 @@ async fn http3_is_advertised_where_it_is_available() {
         let value = response.headers().get(header::ALT_SVC).cloned();
         (running.https.port(), value)
     };
-    for version in [Version::HTTP_11, Version::HTTP_2] {
+    for version in VERSIONS {
         let (port, value) = alt_svc(common::server(&authority), version).await;
         assert_eq!(value.unwrap(), format!("h3=\":{port}\"; ma=86400"));
         let (_, value) = alt_svc(common::server(&authority).public_port(443), version).await;
         assert_eq!(value.unwrap(), "h3=\":443\"; ma=86400");
-        let (_, value) = alt_svc(common::server(&authority).http3(false), version).await;
-        assert_eq!(value, None);
+        if version != Version::HTTP_3 {
+            let (_, value) = alt_svc(common::server(&authority).http3(false), version).await;
+            assert_eq!(value, None);
+        }
     }
-    let (_, value) = alt_svc(common::server(&authority), Version::HTTP_3).await;
-    assert_eq!(value, None);
 }
 
 #[tokio::test]

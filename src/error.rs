@@ -43,6 +43,12 @@ pub enum Error {
         /// What is wrong with its value.
         reason: String,
     },
+    /// One of the [`Limits`](crate::Limits) has a value that nothing could be served with.
+    #[error("the limit `{field}` is zero or too large")]
+    Limit {
+        /// The field of `Limits`.
+        field: &'static str,
+    },
     /// A listener stopped while the server was running.
     #[error("the {listener} listener stopped")]
     Listener {

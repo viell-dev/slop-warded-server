@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
-use warded_server::{Error, Server, Tls};
+use warded_server::{Error, Limits, Server, Tls};
 
 fn fine() -> axum::Router {
     axum::Router::new().fallback(|| async { "fine" })
@@ -38,6 +38,20 @@ async fn a_failed_bind_leaves_nothing_bound() {
     // Without HTTP/3 the same address is free.
     let server = common::server(&authority).https(address).http3(false);
     assert!(server.bind().is_ok());
+}
+
+#[tokio::test]
+async fn unusable_limits_are_reported() {
+    let authority = Authority::new();
+    let mut limits = Limits::default();
+    limits.idle_timeout = Duration::ZERO;
+    let result = common::server(&authority).limits(limits).bind();
+    assert!(matches!(
+        result,
+        Err(Error::Limit {
+            field: "idle_timeout"
+        })
+    ));
 }
 
 #[tokio::test]
@@ -189,6 +203,121 @@ async fn closing_waits_for_a_response_on_a_slow_link() {
         common::soon(quic.closed()).await;
         driver.abort();
     }
+}
+
+#[tokio::test]
+async fn the_goodbye_does_not_disown_requests_that_are_served() {
+    let authority = Authority::new();
+    let (started, mut has_started) = mpsc::channel(8);
+    let app = axum::Router::new().fallback(move || {
+        let started = started.clone();
+        async move {
+            let (release, released) = oneshot::channel::<()>();
+            started.send(release).await.unwrap();
+            released.await.unwrap();
+            "served"
+        }
+    });
+    let mut running = Running::start(common::server(&authority), app);
+    let (_endpoint, quic) = common::quic(running.https, &authority).await.unwrap();
+    let mut requests = Vec::new();
+    for _ in 0..2 {
+        let (mut send, receive) = quic.open_bi().await.unwrap();
+        send.write_all(&common::headers_frame("GET", "/", &[]))
+            .await
+            .unwrap();
+        send.finish().unwrap();
+        requests.push((send.id(), receive));
+    }
+    let releases = [
+        common::soon(has_started.recv()).await.unwrap(),
+        common::soon(has_started.recv()).await.unwrap(),
+    ];
+    running.stop();
+
+    // The control stream ends with the GOAWAY frame: its type, its length and a request's number.
+    let mut control = common::soon(async {
+        loop {
+            let mut stream = quic.accept_uni().await.unwrap();
+            let mut kind = [0];
+            stream.read_exact(&mut kind).await.unwrap();
+            if kind == [0] {
+                break stream;
+            }
+        }
+    })
+    .await;
+    let mut received = Vec::new();
+    let number = common::soon(async {
+        loop {
+            received.push(0);
+            let last = received.len() - 1;
+            control.read_exact(&mut received[last..]).await.unwrap();
+            if let [.., 7, 1, number] = received[..] {
+                break u64::from(number);
+            }
+        }
+    })
+    .await;
+    for (id, _) in &requests {
+        assert!(
+            u64::from(*id) < number,
+            "{id} is served and GOAWAY says {number}"
+        );
+    }
+
+    // Requests from that number on are refused in a way that allows repeating them.
+    let (mut send, mut refused) = quic.open_bi().await.unwrap();
+    assert_eq!(u64::from(send.id()), number);
+    send.write_all(&common::headers_frame("GET", "/", &[]))
+        .await
+        .unwrap();
+    let error = common::soon(refused.read_to_end(1024)).await.unwrap_err();
+    let rejected = h3::error::Code::H3_REQUEST_REJECTED.value();
+    assert!(
+        matches!(error, quinn::ReadToEndError::Read(quinn::ReadError::Reset(code))
+            if code.into_inner() == rejected),
+        "{error:?}"
+    );
+
+    for release in releases {
+        release.send(()).unwrap();
+    }
+    for (_, mut receive) in requests {
+        let response = common::soon(receive.read_to_end(1024)).await.unwrap();
+        assert!(response.windows(6).any(|window| window == b"served"));
+    }
+    quic.close(0x100_u32.into(), b"done");
+    running.ended().await.unwrap();
+}
+
+#[tokio::test]
+async fn websockets_end_with_the_server() {
+    use axum::extract::ws::WebSocketUpgrade;
+    use futures_util::StreamExt;
+
+    let authority = Authority::new();
+    let (ended, mut has_ended) = mpsc::channel::<()>(1);
+    let app = axum::Router::new().fallback(axum::routing::any(move |upgrade: WebSocketUpgrade| {
+        let ended = ended.clone();
+        async {
+            upgrade.on_upgrade(|mut socket| async move {
+                while let Some(Ok(_)) = socket.recv().await {}
+                ended.send(()).await.unwrap();
+            })
+        }
+    }));
+    let mut running = Running::start(common::server(&authority), app);
+    let stream = common::tls(running.https, &authority, b"http/1.1")
+        .await
+        .unwrap();
+    let (mut socket, _) = tokio_tungstenite::client_async("wss://localhost/ws", stream)
+        .await
+        .unwrap();
+    running.stop();
+    running.ended().await.unwrap();
+    common::soon(has_ended.recv()).await.unwrap();
+    assert!(!matches!(common::soon(socket.next()).await, Some(Ok(_))));
 }
 
 #[tokio::test]

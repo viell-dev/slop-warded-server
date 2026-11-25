@@ -113,26 +113,34 @@ where
 }
 
 /// Why [`Params`] refused a request.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ParamsRejection {
     /// No Warded route selected this handler. This is a mistake in the application.
+    #[error("no Warded route selected this handler")]
     NoRoute,
     /// The captured values do not form the expected type.
+    #[error("invalid path: {0}")]
     Invalid(String),
+}
+
+impl ParamsRejection {
+    /// The status of the response to the request.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::NoRoute => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Invalid(_) => StatusCode::BAD_REQUEST,
+        }
+    }
 }
 
 impl IntoResponse for ParamsRejection {
     fn into_response(self) -> Response {
-        match self {
-            Self::NoRoute => {
-                tracing::error!("Params needs a handler that a Warded route selected");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-            Self::Invalid(reason) => {
-                let body = format!("Invalid path: {reason}\n");
-                (StatusCode::BAD_REQUEST, body).into_response()
-            }
+        if let Self::NoRoute = self {
+            tracing::error!("Params needs a handler that a Warded route selected");
+            return self.status().into_response();
         }
+        (self.status(), format!("{self}\n")).into_response()
     }
 }

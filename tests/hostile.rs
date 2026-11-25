@@ -8,43 +8,13 @@ use axum::{
     response::Response,
     routing::{get as axum_get, post},
 };
-use common::{Authority, BoxError, Client, Running, VERSIONS, channel, chunk, get, request, text};
+use common::{
+    Authority, BoxError, Client, DATA, Running, VERSIONS, channel, chunk, frame, get,
+    headers_frame, request, text,
+};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use warded_server::Limits;
-
-/// `GET` or `POST` `https://localhost/…`, with any more encoded fields, as one HEADERS frame.
-fn headers_frame(method: &str, path: &str, more: &[u8]) -> Vec<u8> {
-    // The QPACK prefix for no dynamic table, then :scheme https from the static table.
-    let mut block = vec![0, 0, 0xd7];
-    block.push(match method {
-        "GET" => 0xd1,
-        "POST" => 0xd4,
-        _ => unimplemented!(),
-    });
-    // :authority and :path with their names from the static table and literal values.
-    for (name, value) in [(0x50, "localhost"), (0x51, path)] {
-        block.push(name);
-        block.push(value.len().try_into().unwrap());
-        block.extend_from_slice(value.as_bytes());
-    }
-    block.extend_from_slice(more);
-    frame(1, block.len() as u64, &block)
-}
-
-/// An HTTP/3 frame that declares this length, whatever its payload holds.
-fn frame(kind: u8, length: u64, payload: &[u8]) -> Vec<u8> {
-    let mut frame = vec![kind];
-    if length < 64 {
-        frame.push(length as u8);
-    } else {
-        frame.extend_from_slice(&(length as u32 | 0x8000_0000).to_be_bytes());
-    }
-    frame.extend_from_slice(payload);
-    frame
-}
-
-const DATA: u8 = 0;
 
 /// A `content-length` field: its name from the static table and a literal value.
 fn content_length(value: &str) -> Vec<u8> {
@@ -404,6 +374,81 @@ async fn stalled_clients_are_disconnected() {
         .await
         .unwrap();
     assert_eq!(text(response).await.unwrap(), "fine");
+}
+
+#[tokio::test]
+async fn quic_clients_prove_their_address_when_slots_run_low() {
+    let authority = Authority::new();
+    let mut limits = Limits::default();
+    limits.connections = 4;
+    let running = Running::start(common::server(&authority).limits(limits), echo());
+    // A long header packet of QUIC version 1 and the type Retry (RFC 9000 section 17.2.5).
+    let is_retry = |first: u8| first & 0xf0 == 0xf0;
+    let mut held = Vec::new();
+    for retried in [false, false, true, true] {
+        let (address, reply) = common::first_reply(running.https).await;
+        let mut client = common::http3(address, &authority).await.unwrap();
+        let response = common::send_http3(&mut client.send, get("/"))
+            .await
+            .unwrap();
+        assert_eq!(text(response).await.unwrap(), "fine");
+        assert_eq!(is_retry(reply.await.unwrap()), retried, "{}", held.len());
+        held.push(client);
+    }
+    assert!(common::http3(running.https, &authority).await.is_err());
+}
+
+#[tokio::test]
+async fn silent_clients_are_disconnected() {
+    let authority = Authority::new();
+    let mut limits = Limits::default();
+    limits.idle_timeout = Duration::from_millis(300);
+    let running = Running::start(common::server(&authority).limits(limits), echo());
+
+    let client = common::http3(running.https, &authority).await.unwrap();
+    common::soon(client.quic.closed()).await;
+
+    // An HTTP/2 client that sends a request and then answers no pings.
+    let mut stream = common::tls(running.https, &authority, b"h2").await.unwrap();
+    stream
+        .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        .await
+        .unwrap();
+    stream
+        .write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0])
+        .await
+        .unwrap();
+    // HEADERS that end the stream: GET, https, / and a literal :authority.
+    let head = [0x82, 0x87, 0x84, 0x41, 1, b'a'];
+    stream
+        .write_all(&[0, 0, head.len() as u8, 1, 5, 0, 0, 0, 1])
+        .await
+        .unwrap();
+    stream.write_all(&head).await.unwrap();
+    let mut received = Vec::new();
+    let _ = common::soon(stream.read_to_end(&mut received)).await;
+    assert!(!received.is_empty());
+}
+
+#[tokio::test]
+async fn early_data_is_not_accepted() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let mut config = authority.client_config(b"h3");
+    config.enable_early_data = true;
+    let config = quinn::crypto::rustls::QuicClientConfig::try_from(config).unwrap();
+    let config = quinn::ClientConfig::new(std::sync::Arc::new(config));
+    let endpoint = quinn::Endpoint::client(([127, 0, 0, 1], 0).into()).unwrap();
+    let connect = || {
+        endpoint
+            .connect_with(config.clone(), running.https, "localhost")
+            .unwrap()
+    };
+    // The first connection gets a ticket for the second to resume with.
+    let first = common::soon(connect()).await.unwrap();
+    let mut settings = common::soon(first.accept_uni()).await.unwrap();
+    settings.read_exact(&mut [0; 1]).await.unwrap();
+    assert!(connect().into_0rtt().is_err());
 }
 
 #[tokio::test]

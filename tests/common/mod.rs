@@ -311,6 +311,35 @@ pub async fn http3(address: SocketAddr, authority: &Authority) -> Result<Http3Cl
     })
 }
 
+/// An address that leads to this one, and the first byte of the first packet that comes back.
+pub async fn first_reply(server: SocketAddr) -> (SocketAddr, oneshot::Receiver<u8>) {
+    let outside = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let inside = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    inside.connect(server).await.unwrap();
+    let address = outside.local_addr().unwrap();
+    let (first, reply) = oneshot::channel();
+    tokio::spawn(async move {
+        let (mut sent, mut received) = ([0; 65_536], [0; 65_536]);
+        let (mut first, mut client) = (Some(first), None);
+        loop {
+            tokio::select! {
+                Ok((length, from)) = outside.recv_from(&mut sent) => {
+                    client = Some(from);
+                    let _ = inside.send(&sent[..length]).await;
+                }
+                Ok(length) = inside.recv(&mut received) => {
+                    if let Some(first) = first.take() {
+                        let _ = first.send(received[0]);
+                    }
+                    let _ = outside.send_to(&received[..length], client.unwrap()).await;
+                }
+                else => return,
+            }
+        }
+    });
+    (address, reply)
+}
+
 /// An address that leads to this one over a link with limited bandwidth back to the client.
 pub async fn slow_link(server: SocketAddr, bytes_per_second: usize) -> SocketAddr {
     let outside = Arc::new(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap());
@@ -345,6 +374,39 @@ pub async fn slow_link(server: SocketAddr, bytes_per_second: usize) -> SocketAdd
     });
     address
 }
+
+/// `GET` or `POST` `https://localhost/…`, with any more encoded fields, as one HEADERS frame.
+pub fn headers_frame(method: &str, path: &str, more: &[u8]) -> Vec<u8> {
+    // The QPACK prefix for no dynamic table, then :scheme https from the static table.
+    let mut block = vec![0, 0, 0xd7];
+    block.push(match method {
+        "GET" => 0xd1,
+        "POST" => 0xd4,
+        _ => unimplemented!(),
+    });
+    // :authority and :path with their names from the static table and literal values.
+    for (name, value) in [(0x50, "localhost"), (0x51, path)] {
+        block.push(name);
+        block.push(value.len().try_into().unwrap());
+        block.extend_from_slice(value.as_bytes());
+    }
+    block.extend_from_slice(more);
+    frame(1, block.len() as u64, &block)
+}
+
+/// An HTTP/3 frame that declares this length, whatever its payload holds.
+pub fn frame(kind: u8, length: u64, payload: &[u8]) -> Vec<u8> {
+    let mut frame = vec![kind];
+    if length < 64 {
+        frame.push(length as u8);
+    } else {
+        frame.extend_from_slice(&(length as u32 | 0x8000_0000).to_be_bytes());
+    }
+    frame.extend_from_slice(payload);
+    frame
+}
+
+pub const DATA: u8 = 0;
 
 /// The server's certificate on a new connection.
 pub async fn certificate(

@@ -61,12 +61,11 @@ pub(crate) fn reload_on_hangup(tls: &Tls) -> Option<AbortOnDropHandle<()>> {
     let tls = tls.clone();
     Some(AbortOnDropHandle::new(tokio::spawn(async move {
         while hangup.recv().await.is_some() {
-            match tls.reload() {
-                Ok(()) => tracing::info!("reloaded the certificate"),
-                Err(error) => tracing::error!(
-                    error = &error as &dyn std::error::Error,
-                    "kept the previous certificate"
-                ),
+            let tls = tls.clone();
+            match tokio::task::spawn_blocking(move || tls.reload()).await {
+                Ok(Ok(())) => tracing::info!("reloaded the certificate"),
+                Ok(Err(error)) => tracing::error!(?error, "kept the previous certificate"),
+                Err(error) => tracing::error!(%error, "kept the previous certificate"),
             }
         }
     })))
