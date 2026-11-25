@@ -39,7 +39,7 @@ applications would need adapters. `tokio-quiche` has a more mature HTTP/3, but b
 library built with C++ tools, its own certificate handling, and another interface to bridge. A proxy
 such as Caddy hides the client's protocol from the application, and Warded routes on it.
 
-Reconsider h3 if its [known defects](../docs/limits.md#http3) are not released by the beta stage. The
+Reconsider h3 if its [known defects](../docs/limits.md#http-3) are not released by the beta stage. The
 dependency is confined to `src/http3.rs` and `src/http3/`.
 
 ## The HTTP/3 bridge is our own

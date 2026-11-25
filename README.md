@@ -7,7 +7,7 @@ A ready-wired Rust server for HTTP/1.1, HTTP/2 and HTTP/3. It assembles
 its routes and handlers.
 
 **Alpha.** The API, the templates and the configuration still change, and HTTP/3 rests on an
-experimental library with [known weaknesses](./docs/limits.md#http3). Do not put it on the open
+experimental library with [known weaknesses][limits]. Do not put it on the open
 internet yet.
 
 Agents write and maintain this project. No person reviews the code. See
@@ -40,16 +40,9 @@ curl --insecure --http3 https://localhost:8443/
 ```
 
 Without a certificate the server generates one that no client trusts, hence `--insecure`.
-[Configuration](./docs/configuration.md) covers real certificates and the environment variables.
+[Getting started] explains the steps, and how to add the server to a project of your own.
 
-## Add it to an existing project
-
-```toml
-[dependencies]
-axum = "0.8.9"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.1" }
-```
+## Example
 
 ```rust,no_run
 use axum::{http::Version, routing::any};
@@ -93,20 +86,19 @@ Warded routes. `warded_server::app` turns Warded routes into an `axum::Router`, 
 - **Limits** on connections, concurrent requests and head size, and timeouts for stalled handshakes
   and request heads.
 
-What it leaves to you, and what does not work yet, is in [limits](./docs/limits.md).
+What it leaves to you, and what does not work yet, is in [limits].
 
 ## Documentation
 
-- [Configuration](./docs/configuration.md): environment variables, certificates and HTTP/3 in
-  browsers.
-- [Limits](./docs/limits.md): known weaknesses, tested environments and missing parts.
-- [Changelog](./CHANGELOG.md).
-- API reference: `cargo doc --open` in a project that uses it.
-- [Warded's guides](https://viell-dev.github.io/slop-warded-router/) for everything about routes.
+The [documentation site][site] describes the latest release:
 
-To remove the server from a project, delete the `warded-server` dependency and serve the same
-`axum::Router` with `axum::serve`. Warded routes also work there; see
-[Tower and Axum](https://viell-dev.github.io/slop-warded-router/tower.html).
+- **Projects:** [a JSON API], [a website], [a single-page app], and [existing Axum applications].
+- **Writing it:** [routes and requests], [middleware], [streaming and WebSockets], and [testing].
+- **Running it:** [configuration], [certificates], [HTTP/3], and [deployment].
+- **Help:** [troubleshooting], [limits], and [versions].
+- The [API reference] and the [changelog](./CHANGELOG.md).
+
+[Warded's own guides](https://viell-dev.github.io/slop-warded-router/) cover routes in full.
 
 ## Reporting problems
 
@@ -119,3 +111,22 @@ expected and actual results. Report suspected vulnerabilities privately as the
 
 Licensed under either of [LICENSE-MIT](./LICENSE-MIT) or [LICENSE-APACHE](./LICENSE-APACHE), at your
 option.
+
+[site]: https://viell-dev.github.io/slop-warded-server/
+[getting started]: https://viell-dev.github.io/slop-warded-server/getting-started.html
+[a JSON API]: https://viell-dev.github.io/slop-warded-server/json-api.html
+[a website]: https://viell-dev.github.io/slop-warded-server/website.html
+[a single-page app]: https://viell-dev.github.io/slop-warded-server/single-page-app.html
+[existing Axum applications]: https://viell-dev.github.io/slop-warded-server/existing-axum.html
+[routes and requests]: https://viell-dev.github.io/slop-warded-server/requests.html
+[middleware]: https://viell-dev.github.io/slop-warded-server/middleware.html
+[streaming and WebSockets]: https://viell-dev.github.io/slop-warded-server/streaming.html
+[testing]: https://viell-dev.github.io/slop-warded-server/testing.html
+[configuration]: https://viell-dev.github.io/slop-warded-server/configuration.html
+[certificates]: https://viell-dev.github.io/slop-warded-server/certificates.html
+[HTTP/3]: https://viell-dev.github.io/slop-warded-server/http3.html
+[deployment]: https://viell-dev.github.io/slop-warded-server/deployment.html
+[troubleshooting]: https://viell-dev.github.io/slop-warded-server/troubleshooting.html
+[limits]: https://viell-dev.github.io/slop-warded-server/limits.html
+[versions]: https://viell-dev.github.io/slop-warded-server/versions.html
+[API reference]: https://viell-dev.github.io/slop-warded-server/api/warded_server/

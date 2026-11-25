@@ -1,3 +1,7 @@
+---
+description: "Known weaknesses of HTTP/3, what your application must provide, what is not supported yet, and what has been tested."
+---
+
 # Limits
 
 ## HTTP/3
@@ -15,53 +19,57 @@ release, 0.0.8, has these open defects:
 - **Empty DATA frames.** A request body that contains one fails
   ([h3#372](https://github.com/hyperium/h3/issues/372)).
 
-The server works around two others. It limits decoded heads
+The server works around others. It limits decoded heads
 ([h3#379](https://github.com/hyperium/h3/issues/379)), and it contains a panic that a malformed body
-causes ([h3#386](https://github.com/hyperium/h3/issues/386)), although Rust still reports that panic.
-Containing it needs unwinding, so the `http3` feature refuses to compile with `panic = "abort"`.
+causes ([h3#386](https://github.com/hyperium/h3/issues/386)), although Rust still reports that
+panic. Containing it needs unwinding, so the `http3` feature refuses to compile with
+`panic = "abort"`.
 
-Set `WARDED_HTTP3=off` to serve without it, or leave out the `http3` feature. WebSockets,
-WebTransport and other uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never
-accepted.
+`WARDED_HTTP3=off` [turns HTTP/3 off](./http3.md#turn-it-off). WebSockets, WebTransport and other
+uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never accepted.
 
 ## What the application provides
 
-- Limits on request bodies, handler time and concurrent handlers. Axum's extractors limit bodies to
-  2 MB by default; reading the body yourself does not.
-- Authentication, CORS, security headers such as HSTS, and compression. The `api` and `website`
-  templates add compression, logging and 500 responses for panics with `tower-http`.
-- Host-based routing. HTTP/1.1 requests name the host in `Host`, and HTTP/2 and HTTP/3 requests in
-  the URI; Warded's guide has
-  [a host condition](https://viell-dev.github.io/slop-warded-router/custom-matchers.html) for all
-  three.
+| Concern                                  | Where                                                                  |
+| ---------------------------------------- | ---------------------------------------------------------------------- |
+| Limits on bodies, time and busy handlers | [Middleware](./middleware.md). Axum's extractors limit bodies to 2 MB  |
+| Authentication and sessions              | [Middleware or handlers](./json-api.md#require-authentication-on-some-routes) |
+| CORS and security headers                | [Middleware](./middleware.md#security-headers)                         |
+| Compression, logging, 500 for panics     | [Middleware](./middleware.md), in the `api` and `website` templates    |
+| Databases, background work, e-mail       | Libraries of your choice                                               |
 
 ## Not supported yet
 
-- **Obtaining certificates.** Bring your own, for example from Certbot.
-- **Running behind a proxy that terminates TLS.** The cleartext listener can serve the application,
-  but requests then count as insecure, because headers from a proxy are not trusted.
+- **Obtaining certificates.** Bring your own, for example from
+  [Certbot](./certificates.md#for-the-public)
+  ([#4](https://github.com/viell-dev/slop-warded-server/issues/4)).
+- **Trusting a proxy that ends TLS.** Requests on the cleartext listener count as insecure, and have
+  the proxy's address ([#5](https://github.com/viell-dev/slop-warded-server/issues/5)).
 - **More than one certificate or HTTPS address** in one server.
 - **WebSockets over HTTP/2.** They work over HTTP/1.1.
 - **HEAD with compression.** Layers around the application see the response to HEAD after its body
-  is gone, so `CompressionLayer` leaves it alone, unlike the response to GET.
+  is gone, so `CompressionLayer` leaves it alone, unlike the response to GET
+  ([#7](https://github.com/viell-dev/slop-warded-server/issues/7)).
+- **gRPC** has not been tried.
 
 ## Connections
 
 Nothing limits how long a client takes to send a request body or to read a response, as long as its
 connection is alive. Each such client holds a connection.
 
-The default [`Limits`](../src/limits.rs) are not tuned for any particular machine. An HTTP/2
+The default [limits](./configuration.md#limits) are not tuned for any particular machine. An HTTP/2
 connection stays open as long as its client answers pings, so idle clients use up the connection
 limit. When it is reached, new TCP connections are closed without a response, and new QUIC
 connections are refused.
 
-At the end of an HTTP/3 connection the server waits until it has sent nothing for two seconds, or the
-client closes it, so that the last response is not lost. Shutting down with idle HTTP/3 clients
-therefore takes about that long.
+At the end of an HTTP/3 connection the server waits until it has sent nothing for two seconds, or
+the client closes it, so that the last response is not lost.
 
 ## Tested environments
 
-Rust 1.99.1 on Linux and Windows in CI, with real HTTP/1.1, HTTP/2 and HTTP/3 connections over
-loopback from Rust clients. Before a release also, on Linux, curl for each protocol and for the
-upgrade through `Alt-Svc`, and Chromium over HTTP/3. Real networks, load and other HTTP/3 clients are
-untested.
+- **In CI:** Rust 1.99.1 on Linux and Windows, with real HTTP/1.1, HTTP/2 and HTTP/3 connections
+  over loopback from Rust clients, and each template's project on Linux.
+- **Before a release, on Linux:** curl with each protocol and with the upgrade through `Alt-Svc`,
+  and Chromium over HTTP/3.
+- **Not tested:** macOS, real networks, load, other HTTP/3 clients, and applications built with
+  Leptos, Dioxus or Tonic.
