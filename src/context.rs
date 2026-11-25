@@ -1,9 +1,12 @@
-//! What every listener does to a request before the application sees it.
+//! What every listener does to requests before the application sees them, and to its responses.
 
 use axum::{
     body::{Body, Bytes},
     extract::ConnectInfo,
-    http::{HeaderMap, HeaderValue, Request, Version, header::COOKIE},
+    http::{
+        HeaderMap, HeaderValue, Request, StatusCode, Version,
+        header::{CONTENT_LENGTH, COOKIE},
+    },
     response::Response,
 };
 use std::{
@@ -11,7 +14,7 @@ use std::{
     net::SocketAddr,
     task::{Context, Poll},
 };
-use tower::Service;
+use tower::{Service, util::MapResponse};
 
 /// How the connection that carried a request was secured.
 #[derive(Clone, Copy, Debug)]
@@ -22,10 +25,12 @@ pub(crate) enum Security {
     Cleartext,
 }
 
+type App = MapResponse<axum::Router, fn(Response) -> Response>;
+
 /// The application as seen by one connection.
 #[derive(Clone)]
 pub(crate) struct Connection {
-    app: axum::Router,
+    app: App,
     peer: SocketAddr,
     security: Security,
 }
@@ -33,7 +38,7 @@ pub(crate) struct Connection {
 impl Connection {
     pub(crate) fn new(app: axum::Router, peer: SocketAddr, security: Security) -> Self {
         Self {
-            app,
+            app: MapResponse::new(app, without_content),
             peer: canonical(peer),
             security,
         }
@@ -47,10 +52,10 @@ where
 {
     type Response = Response;
     type Error = Infallible;
-    type Future = axum::routing::future::RouteFuture<Infallible>;
+    type Future = <App as Service<Request<Body>>>::Future;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
-        <axum::Router as Service<Request<Body>>>::poll_ready(&mut self.app, cx)
+        <App as Service<Request<Body>>>::poll_ready(&mut self.app, cx)
     }
 
     fn call(&mut self, request: Request<B>) -> Self::Future {
@@ -69,6 +74,18 @@ where
         }
         self.app.call(request)
     }
+}
+
+/// Drop content that its status rules out (RFC 9110 sections 15.3.5 and 15.4.5).
+///
+/// Of the protocol implementations, only Hyper's HTTP/1.1 does this.
+fn without_content(mut response: Response) -> Response {
+    if let StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED = response.status() {
+        *response.body_mut() = Body::empty();
+        // Axum's is about the body that it saw, and would be 0 for an empty one.
+        response.headers_mut().remove(CONTENT_LENGTH);
+    }
+    response
 }
 
 /// An IPv4 client of a dual-stack listener has an IPv4 address, not an IPv4-mapped IPv6 one.

@@ -21,7 +21,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{net::TcpStream, sync::oneshot, task::JoinHandle, time::timeout};
+use tokio::{
+    net::{TcpStream, UdpSocket},
+    sync::{mpsc, oneshot, watch},
+    task::JoinHandle,
+    time::timeout,
+};
 use tokio_rustls::{TlsConnector, client::TlsStream};
 use warded_server::{BoundServer, Error, Server, Tls};
 
@@ -304,6 +309,41 @@ pub async fn http3(address: SocketAddr, authority: &Authority) -> Result<Http3Cl
         driver,
         endpoint,
     })
+}
+
+/// An address that leads to this one over a link with limited bandwidth back to the client.
+pub async fn slow_link(server: SocketAddr, bytes_per_second: usize) -> SocketAddr {
+    let outside = Arc::new(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap());
+    let inside = Arc::new(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap());
+    inside.connect(server).await.unwrap();
+    let address = outside.local_addr().unwrap();
+    let (queue, mut queued) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (met, mut client) = watch::channel(None);
+    tokio::spawn({
+        let (outside, inside) = (outside.clone(), inside.clone());
+        async move {
+            let mut packet = [0; 65_536];
+            while let Ok((length, client)) = outside.recv_from(&mut packet).await {
+                met.send_replace(Some(client));
+                let _ = inside.send(&packet[..length]).await;
+            }
+        }
+    });
+    tokio::spawn(async move {
+        let mut packet = [0; 65_536];
+        while let Ok(length) = inside.recv(&mut packet).await {
+            let _ = queue.send(packet[..length].to_vec());
+        }
+    });
+    tokio::spawn(async move {
+        while let Some(packet) = queued.recv().await {
+            let pause = Duration::from_secs_f64(packet.len() as f64 / bytes_per_second as f64);
+            tokio::time::sleep(pause).await;
+            let client = client.wait_for(Option::is_some).await.unwrap().unwrap();
+            let _ = outside.send_to(&packet, client).await;
+        }
+    });
+    address
 }
 
 /// The server's certificate on a new connection.
