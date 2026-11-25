@@ -156,6 +156,105 @@ network's own instead of the client's.
 
 - **A load balancer that passes TCP and UDP through** works, with the certificate on this server.
   Connections must keep reaching the same server, also over UDP.
-- **A proxy or CDN that ends TLS** speaks HTTP/1.1 or HTTP/2 to this server. It can connect to the
-  HTTPS address. Visitors then use the protocols of the proxy, and your routes see the proxy's
-  connection instead of theirs.
+- **A proxy or CDN that ends TLS** speaks HTTP/1.1 or HTTP/2 to this server. Visitors then use the
+  protocols and the certificate of the proxy, and your routes see the proxy's connection instead of
+  theirs.
+
+### A proxy that ends TLS
+
+The proxy can connect to the HTTPS address, or to a cleartext one that you add with
+[`serve_http`](./configuration.md#cleartext-http). What it connected with says nothing about the
+visitor, whose address and security only the proxy knows. It can report them in fields, usually
+`X-Forwarded-For` and `X-Forwarded-Proto`. The server reads neither, because any client can send
+them too. Your application can, for connections that come from the proxy:
+
+```rust
+use axum::{
+    body::Body,
+    extract::{ConnectInfo, Request},
+    middleware::map_request,
+    routing::any,
+};
+use http_body_util::BodyExt;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tower::ServiceExt;
+use warded_server::warded::{
+    Matcher, Router, TransportSecurity,
+    matchers::{exact_path, secured},
+};
+
+/// The address that the proxy connects from.
+const PROXY: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+
+/// Replace what is known about the proxy's connection by what the proxy says about its client's.
+async fn trust_proxy(mut request: Request) -> Request {
+    let peer = request.extensions().get::<ConnectInfo<SocketAddr>>();
+    if peer.is_none_or(|peer| peer.0.ip() != PROXY) {
+        return request;
+    }
+    // More than one value means that the proxy passes on what its client sent.
+    let mut protocols = request.headers().get_all("x-forwarded-proto").iter();
+    let security = match (protocols.next(), protocols.next()) {
+        (Some(protocol), None) if protocol == "https" => TransportSecurity::Https,
+        (Some(protocol), None) if protocol == "http" => TransportSecurity::Unsecure,
+        _ => TransportSecurity::Unknown,
+    };
+    // The proxy adds its client at the end, after what that client may have sent.
+    let client = request
+        .headers()
+        .get_all("x-forwarded-for")
+        .iter()
+        .next_back()
+        .and_then(|field| field.to_str().ok()?.rsplit(',').next()?.trim().parse().ok());
+    let extensions = request.extensions_mut();
+    extensions.insert(security);
+    if let Some(client) = client {
+        extensions.insert(ConnectInfo(SocketAddr::new(client, 0)));
+    }
+    request
+}
+
+async fn greet(ConnectInfo(client): ConnectInfo<SocketAddr>) -> String {
+    format!("Hello {}", client.ip())
+}
+
+fn app() -> axum::Router {
+    let routes = Router::new().route(exact_path("/").and(secured()), any(greet));
+    warded_server::app(routes).layer(map_request(trust_proxy))
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Both claim that 192.0.2.1 connected with HTTPS, and only the first is the proxy.
+    for (peer, status, text) in [
+        ([10, 0, 0, 2], 200, "Hello 192.0.2.1"),
+        ([203, 0, 113, 9], 404, ""),
+    ] {
+        let mut request = Request::builder()
+            .uri("/")
+            .header("x-forwarded-for", "198.51.100.7, 192.0.2.1")
+            .header("x-forwarded-proto", "https")
+            .body(Body::empty())?;
+        // What the server adds to a request on the cleartext address.
+        let extensions = request.extensions_mut();
+        extensions.insert(ConnectInfo(SocketAddr::from((peer, 40_000))));
+        extensions.insert(TransportSecurity::Unsecure);
+        let response = app().oneshot(request).await?;
+        assert_eq!(response.status(), status);
+        assert_eq!(response.into_body().collect().await?.to_bytes(), text);
+    }
+    Ok(())
+}
+```
+
+This trusts the proxy completely, so check what yours does, and that nothing else can connect from
+its address:
+
+- It must replace `X-Forwarded-Proto` in every request, also when the client sent one.
+- It must add the client's address at the end of `X-Forwarded-For`, or replace the field. Behind
+  several proxies, the last address is that of another proxy and not the visitor's.
+- When `X-Forwarded-Proto` is missing or repeated, routes with `secured()` or `unsecure()` fail with
+  a 500, so that a mistake in the proxy's settings is noticed.
+
+Warded's guide has [more on transport
+security](https://viell-dev.github.io/slop-warded-router/transport-security.html#behind-a-reverse-proxy).

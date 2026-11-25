@@ -64,8 +64,8 @@ should trust on a network.
 With `serve_http` in code, the application answers there instead, and routes can tell the difference
 with `unsecure()`. That listener also accepts HTTP/2 from clients that start with it (h2c).
 
-The server does not trust headers from proxies. Behind one that ends TLS, all requests count as
-insecure; see [limits](./limits.md#not-supported-yet).
+The server does not trust headers from proxies. Behind one that ends TLS, all requests on this
+address count as insecure, unless [your application trusts it](./deployment.md#a-proxy-that-ends-tls).
 
 ## Limits
 

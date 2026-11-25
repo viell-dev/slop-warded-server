@@ -66,4 +66,8 @@ cleaning response heads.
   responses on slow links.
 - **Connection slots are held by the stream**, not the service, so that upgraded connections count.
 - **Response streams reset unless finished.** Quinn finishes a stream that is dropped.
-- **No `Forwarded` or `X-Forwarded-*` field is read.** A client can send them.
+- **No `Forwarded` or `X-Forwarded-*` field is read.** A client can send them. Trusting a proxy
+  depends on its address and on what it does with each field, so it is a [recipe for the
+  application](../docs/deployment.md#a-proxy-that-ends-tls) and not a setting: a setting would have to
+  cover every proxy's habits, and one that is nearly right is a security defect. Reconsider it when
+  several applications need the same one.
