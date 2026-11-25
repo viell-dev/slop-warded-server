@@ -50,8 +50,9 @@ connection stays open as long as its client answers pings, so idle clients use u
 limit. When it is reached, new TCP connections are closed without a response, and new QUIC
 connections are refused.
 
-Shutting down waits up to two seconds for each HTTP/3 client to close its connection after its last
-response, so that none of it is lost.
+At the end of an HTTP/3 connection the server waits until it has sent nothing for two seconds, or the
+client closes it, so that the last response is not lost. Shutting down with idle HTTP/3 clients
+therefore takes about that long.
 
 ## Tested environments
 

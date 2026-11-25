@@ -215,6 +215,44 @@ async fn responses_have_the_same_head_on_every_protocol() {
 }
 
 #[tokio::test]
+async fn statuses_without_content_have_no_body() {
+    let authority = Authority::new();
+    let app = axum::Router::new()
+        .route(
+            "/204",
+            axum_get(|| async { (StatusCode::NO_CONTENT, "unexpected") }),
+        )
+        .route(
+            "/304",
+            axum_get(|| async { (StatusCode::NOT_MODIFIED, "unexpected") }),
+        );
+    let running = Running::start(common::server(&authority), app);
+    for version in VERSIONS {
+        for path in ["/204", "/304"] {
+            let mut client = Client::connect(version, running.https, &authority)
+                .await
+                .unwrap();
+            let response = client.get(path).await.unwrap();
+            let length = response.headers().get(header::CONTENT_LENGTH);
+            assert_eq!(length, None, "{version:?} {path}");
+            assert_eq!(text(response).await.unwrap(), "", "{version:?} {path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_informational_status_is_not_a_final_response() {
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(|| async { StatusCode::EARLY_HINTS });
+    let running = Running::start(common::server(&authority), app);
+    let mut client = Client::connect(Version::HTTP_3, running.https, &authority)
+        .await
+        .unwrap();
+    let response = client.get("/").await.unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
 async fn http3_is_advertised_where_it_is_available() {
     let authority = Authority::new();
     let alt_svc = async |server, version| {

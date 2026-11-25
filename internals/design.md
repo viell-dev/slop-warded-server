@@ -52,16 +52,18 @@ Published bridges from h3 to Axum were inspected and not used:
 - `axum-h3` and `h3-util` 0.0.6 leave h3's decoded head size unlimited, cancel requests whose body
   the handler does not read, and abandon connections at shutdown.
 
-Both are small; so is the replacement in `src/http3/body.rs`. It also checks `Content-Length`, which
-h3 leaves to its caller.
+Both are small; so is the replacement in `src/http3/body.rs` and `src/http3/head.rs`. It also does what
+Hyper does for HTTP/2 and h3 leaves to its caller: checking request heads and `Content-Length`, and
+cleaning response heads.
 
 ## Choices that are easy to undo by accident
 
 - **The application is wrapped in an Axum router** before anything else, because that router supplies
   HEAD and `Content-Length` handling, which Hyper does for HTTP/1.1 and HTTP/2 only in part and h3
   not at all.
-- **Draining HTTP/3 lingers.** Closing a QUIC connection discards what is still in transit, and h3
-  does not report when a response has been received.
+- **Closing HTTP/3 lingers while data flows.** Closing a QUIC connection discards what Quinn still has
+  to send or repeat, and h3 does not report when a response has been received. A fixed delay loses
+  responses on slow links.
 - **Connection slots are held by the stream**, not the service, so that upgraded connections count.
 - **Response streams reset unless finished.** Quinn finishes a stream that is dropped.
 - **No `Forwarded` or `X-Forwarded-*` field is read.** A client can send them.

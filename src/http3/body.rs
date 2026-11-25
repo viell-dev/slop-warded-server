@@ -5,10 +5,9 @@
 //! cancels every request whose body the handler leaves unread.
 
 use super::BoxError;
-use axum::body::{Body, HttpBody};
+use axum::{body::HttpBody, response::Response};
 use bytes::{Buf, Bytes};
 use h3::{error::Code, server::RequestStream};
-use http::{HeaderMap, Response, header::CONTENT_LENGTH};
 use http_body::{Frame, SizeHint};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
@@ -35,14 +34,11 @@ enum Next {
 }
 
 impl RequestBody {
-    pub(super) fn new(stream: ReceiveStream, headers: &HeaderMap) -> Self {
-        let remaining = headers
-            .get(CONTENT_LENGTH)
-            .and_then(|length| length.to_str().ok()?.parse().ok());
+    pub(super) fn new(stream: ReceiveStream, length: Option<u64>) -> Self {
         Self {
             stream,
             next: Next::Data,
-            remaining,
+            remaining: length,
         }
     }
 
@@ -136,7 +132,15 @@ impl Responder {
         }
     }
 
-    pub(super) async fn send(mut self, head: Response<()>, body: Body) -> Result<(), BoxError> {
+    /// Refuse the request without a response.
+    pub(super) fn reset(mut self, code: Code) {
+        self.stream.stop_stream(code);
+        self.finished = true;
+    }
+
+    pub(super) async fn send(mut self, response: Response) -> Result<(), BoxError> {
+        let (parts, body) = response.into_parts();
+        let head = http::Response::from_parts(parts, ());
         self.stream.send_response(head).await?;
         let mut body = std::pin::pin!(body);
         while let Some(frame) = std::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await {

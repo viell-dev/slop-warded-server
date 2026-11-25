@@ -159,6 +159,41 @@ async fn requests_in_progress_finish_during_shutdown() {
     }
 }
 
+/// Small enough for Quinn to take at once, and large enough to spend seconds on the slow link.
+const SLOW_RESPONSE: usize = 600_000;
+
+#[tokio::test]
+async fn closing_waits_for_a_response_on_a_slow_link() {
+    let authority = Authority::new();
+    for goodbye in [true, false] {
+        let app = axum::Router::new().fallback(|| async { vec![b'x'; SLOW_RESPONSE] });
+        let mut running = Running::start(common::server(&authority), app);
+        let address = common::slow_link(running.https, 150_000).await;
+        let (_endpoint, quic) = common::quic(address, &authority).await.unwrap();
+        let transport = h3_quinn::Connection::new(quic.clone());
+        let (mut connection, mut send) = h3::client::new(transport).await.unwrap();
+        let mut stream = send.send_request(get("/").map(|_| ())).await.unwrap();
+        stream.finish().await.unwrap();
+        common::soon(stream.recv_response()).await.unwrap();
+        // Either side can announce the end.
+        if goodbye {
+            connection.shutdown(0).await.unwrap();
+        } else {
+            running.stop();
+        }
+        let driver =
+            tokio::spawn(async move { std::future::poll_fn(|cx| connection.poll_close(cx)).await });
+        let mut length = 0;
+        while let Some(data) = common::soon(stream.recv_data()).await.unwrap() {
+            length += bytes::Buf::remaining(&data);
+        }
+        assert_eq!(length, SLOW_RESPONSE);
+        // The server does not wait for longer than it has to.
+        common::soon(quic.closed()).await;
+        driver.abort();
+    }
+}
+
 #[tokio::test]
 async fn idle_connections_do_not_delay_shutdown() {
     let authority = Authority::new();

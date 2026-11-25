@@ -209,6 +209,31 @@ async fn a_malformed_http3_body_is_not_a_complete_one() {
 }
 
 #[tokio::test]
+async fn a_malformed_http3_head_does_not_reach_the_application() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    // transfer-encoding: chunked, with a literal name and value.
+    let mut field = vec![0x27, 17 - 7];
+    field.extend_from_slice(b"transfer-encoding");
+    field.push(7);
+    field.extend_from_slice(b"chunked");
+    let two_lengths = [content_length("5"), content_length("6")].concat();
+    for more in [field, two_lengths, content_length("+5")] {
+        let bytes = [
+            headers_frame("POST", "/echo", &more),
+            frame(DATA, 5, b"hello"),
+        ]
+        .concat();
+        assert!(raw(&client.quic, &bytes).await.is_err(), "{more:02x?}");
+    }
+    let response = common::send_http3(&mut client.send, get("/"))
+        .await
+        .unwrap();
+    assert_eq!(text(response).await.unwrap(), "fine");
+}
+
+#[tokio::test]
 async fn a_truncated_http3_body_leaves_its_connection_usable() {
     let authority = Authority::new();
     let running = Running::start(common::server(&authority), echo());
@@ -318,6 +343,23 @@ async fn stalled_clients_are_disconnected() {
     // No TLS handshake.
     let mut stream = tokio::net::TcpStream::connect(running.https).await.unwrap();
     assert_eq!(common::soon(stream.read(&mut [0; 16])).await.unwrap(), 0);
+
+    // A QUIC handshake without room for the server's control stream.
+    let config = authority.client_config(b"h3");
+    let config = quinn::crypto::rustls::QuicClientConfig::try_from(config).unwrap();
+    let mut config = quinn::ClientConfig::new(std::sync::Arc::new(config));
+    let mut transport = quinn::TransportConfig::default();
+    transport
+        .max_concurrent_uni_streams(0_u8.into())
+        .keep_alive_interval(Some(Duration::from_millis(50)));
+    config.transport_config(std::sync::Arc::new(transport));
+    let endpoint = quinn::Endpoint::client(([127, 0, 0, 1], 0).into()).unwrap();
+    let quic = endpoint
+        .connect_with(config, running.https, "localhost")
+        .unwrap()
+        .await
+        .unwrap();
+    common::soon(quic.closed()).await;
 
     // A partial HTTP/1.1 head.
     let mut stream = common::tls(running.https, &authority, b"http/1.1")

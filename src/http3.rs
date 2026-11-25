@@ -1,6 +1,7 @@
 //! HTTP/3 over QUIC, run by Quinn and h3.
 
 mod body;
+mod head;
 
 use crate::{
     Error, Limits, Tls,
@@ -8,27 +9,19 @@ use crate::{
 };
 use body::{RequestBody, Responder};
 use bytes::Bytes;
-use h3::server::RequestResolver;
-use http::{
-    HeaderMap, HeaderValue, Request, Response,
-    header::{CONNECTION, DATE, TE, TRANSFER_ENCODING, UPGRADE},
-};
+use h3::{error::Code, server::RequestResolver};
+use http::Request;
 use quinn::{VarInt, crypto::rustls::QuicServerConfig};
-use std::{
-    io,
-    net::UdpSocket,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{io, net::UdpSocket, sync::Arc, time::Duration};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinSet,
-    time::{sleep, timeout},
+    time::timeout,
 };
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-/// How long a finished connection waits for its client to receive everything and close.
+/// How long a finished connection may send nothing before it is closed.
 const LINGER: Duration = Duration::from_secs(2);
 
 /// How long closing every connection may take once they are all told to close.
@@ -102,7 +95,7 @@ impl Http3 {
                 Some(incoming) = self.endpoint.accept() => incoming.refuse(),
             }
         }
-        let code = VarInt::from_u64(h3::error::Code::H3_NO_ERROR.value());
+        let code = VarInt::from_u64(Code::H3_NO_ERROR.value());
         self.endpoint.close(
             code.expect("HTTP/3 codes fit a QUIC integer"),
             b"shutting down",
@@ -155,13 +148,18 @@ struct QuicConnection {
 
 impl QuicConnection {
     async fn serve(&self, incoming: quinn::Incoming) -> Result<(), BoxError> {
-        let quic = timeout(self.limits.handshake_timeout, incoming.accept()?).await??;
-        let mut connection = h3::server::builder()
-            // h3 has no limit by default, which lets a small request decode to a huge one
-            // (https://github.com/hyperium/h3/issues/379).
-            .max_field_section_size(self.limits.head_bytes.into())
-            .build(h3_quinn::Connection::new(quic.clone()))
-            .await?;
+        let handshake = async {
+            let quic = incoming.accept()?.await?;
+            // This waits until the client lets the server open its control stream.
+            let connection = h3::server::builder()
+                // h3 has no limit by default, which lets a small request decode to a huge one
+                // (https://github.com/hyperium/h3/issues/379).
+                .max_field_section_size(self.limits.head_bytes.into())
+                .build(h3_quinn::Connection::new(quic.clone()))
+                .await?;
+            Ok::<_, BoxError>((quic, connection))
+        };
+        let (quic, mut connection) = timeout(self.limits.handshake_timeout, handshake).await??;
 
         // Dropping the set aborts requests whose connection is gone.
         let mut requests = JoinSet::new();
@@ -174,9 +172,7 @@ impl QuicConnection {
                 }
                 // A panicking handler ends its own request only.
                 Some(_) = requests.join_next() => {}
-                // Closing right after the last response could lose the end of it in transit, so
-                // give the client time to close first.
-                () = sleep(LINGER), if draining && requests.is_empty() => return Ok(()),
+                () = linger(&quic), if draining && requests.is_empty() => return Ok(()),
                 accepted = connection.accept() => match accepted? {
                     Some(resolver) => {
                         let app = Connection::new(
@@ -187,9 +183,26 @@ impl QuicConnection {
                         );
                         requests.spawn(serve_request(app, resolver, self.limits.head_timeout));
                     }
-                    None => return Ok(()),
+                    // The client announced that it has no more requests, and all are answered.
+                    None => break,
                 },
             }
+        }
+        while requests.join_next().await.is_some() {}
+        linger(&quic).await;
+        Ok(())
+    }
+}
+
+/// Wait until the client closes the connection, or has been sent everything.
+///
+/// Finishing a response only hands the end of it to Quinn, and closing the connection discards
+/// what Quinn still has to send or repeat. h3 does not report when the client has it all.
+async fn linger(quic: &quinn::Connection) {
+    loop {
+        let sent = quic.stats().frame_tx.stream;
+        if timeout(LINGER, quic.closed()).await.is_ok() || quic.stats().frame_tx.stream == sent {
+            return;
         }
     }
 }
@@ -213,30 +226,13 @@ async fn try_serve_request(
     let (send, receive) = stream.split();
     let responder = Responder::new(send);
     let (parts, ()) = head.into_parts();
-    let body = RequestBody::new(receive, &parts.headers);
+    let body = match head::content_length(&parts.headers) {
+        Ok(length) => RequestBody::new(receive, length),
+        Err(malformed) => {
+            responder.reset(Code::H3_MESSAGE_ERROR);
+            return Err(malformed.into());
+        }
+    };
     let Ok(response) = app.oneshot(Request::from_parts(parts, body)).await;
-
-    let (mut parts, body) = response.into_parts();
-    prepare(&mut parts.headers);
-    responder.send(Response::from_parts(parts, ()), body).await
-}
-
-/// Do for an HTTP/3 response head what Hyper does for HTTP/2.
-fn prepare(headers: &mut HeaderMap) {
-    // Fields about an HTTP/1.1 connection make an HTTP/3 message malformed (RFC 9114 section
-    // 4.2). Middleware written for HTTP/1.1 may add them.
-    for name in [
-        CONNECTION,
-        TRANSFER_ENCODING,
-        UPGRADE,
-        TE,
-        http::HeaderName::from_static("keep-alive"),
-        http::HeaderName::from_static("proxy-connection"),
-    ] {
-        headers.remove(name);
-    }
-    headers.entry(DATE).or_insert_with(|| {
-        HeaderValue::try_from(httpdate::fmt_http_date(SystemTime::now()))
-            .expect("a formatted date is a valid value")
-    });
+    responder.send(head::prepare(response)).await
 }
