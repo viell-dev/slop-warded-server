@@ -31,6 +31,9 @@ jobs:
       - name: Check the library
         shell: bash
         run: bash scripts/check.sh
+      - name: Test the Pages release resolution
+        if: runner.os == 'Linux'
+        run: bash .github/scripts/pages-test.sh
 
   templates:
     runs-on: ubuntu-latest
@@ -57,6 +60,27 @@ jobs:
           pwd >> "$GITHUB_PATH"
       - name: Generate and check every template
         run: bash scripts/check-templates.sh
+
+  # The documentation site builds with VitePress, which fails on links to missing pages and on
+  # missing code snippets; the site configuration also fails on links to missing headings. The
+  # checks job runs its Rust examples. The Pages workflow deploys the site from release tags only.
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: docs/.nvmrc
+      - name: Install the pinned site tooling
+        run: npm ci --no-audit --no-fund
+      - name: Build the site
+        run: npm run build
 
   dependencies:
     runs-on: ubuntu-latest
@@ -85,14 +109,15 @@ jobs:
 
   ci:
     if: always()
-    needs: [checks, templates, dependencies]
+    needs: [checks, templates, site, dependencies]
     runs-on: ubuntu-latest
     steps:
       - name: Require every check
         env:
           CHECK_RESULT: ${{ needs.checks.result }}
           TEMPLATE_RESULT: ${{ needs.templates.result }}
+          SITE_RESULT: ${{ needs.site.result }}
           DEPENDENCY_RESULT: ${{ needs.dependencies.result }}
         run: |
           test "$CHECK_RESULT" = success && test "$TEMPLATE_RESULT" = success &&
-            test "$DEPENDENCY_RESULT" = success
+            test "$SITE_RESULT" = success && test "$DEPENDENCY_RESULT" = success

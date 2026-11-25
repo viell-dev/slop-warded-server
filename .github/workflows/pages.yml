@@ -1,0 +1,107 @@
+name: Pages
+
+# The documentation site describes the latest release. Dispatched by hand with that release's tag,
+# this workflow builds the site and the API reference from the tag and deploys them. With
+# `corrections` it builds from the tag's site-<version> branch instead, which must descend from the
+# tag and change nothing outside docs/, so that a correction needs neither a new version nor a
+# moved tag. The workflow runs on main, which the github-pages environment allows; only the
+# checkout uses the tag or the branch. The site's version.json names what it was built from. CI
+# builds the site on every pull request.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The newest release's tag (an exact version, without a v prefix)
+        required: true
+      corrections:
+        description: Deploy the documentation corrections on the tag's site-<version> branch
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag-commit: ${{ steps.resolve.outputs.tag-commit }}
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Choose the commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          CORRECTIONS: ${{ inputs.corrections }}
+        run: bash .github/scripts/pages-resolve.sh
+
+  build:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+          persist-credentials: false
+      # This job runs code from a release tag or a site-<version> branch on main's behalf, so it
+      # could write Actions caches that main's workflows restore. It saves no cache of its own.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: docs/.nvmrc
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Install the pinned site tooling
+        working-directory: docs
+        run: npm ci --no-audit --no-fund
+      - name: Build the site
+        working-directory: docs
+        run: npm run build
+      - name: Build the API reference
+        run: |
+          cargo doc --package warded-server --no-deps --locked
+          cp -r target/doc docs/.vitepress/dist/api
+      - name: Record what the site was built from
+        env:
+          TAG: ${{ inputs.tag }}
+          TAG_COMMIT: ${{ needs.resolve.outputs.tag-commit }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg tag "$TAG" --arg tag_commit "$TAG_COMMIT" --arg commit "$COMMIT" \
+            --arg run "$RUN" \
+            '{version: $tag, tag: {name: $tag, commit: $tag_commit}, commit: $commit, run: $run}' \
+            > docs/.vitepress/dist/version.json
+          cat docs/.vitepress/dist/version.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the site
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

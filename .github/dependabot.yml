@@ -15,6 +15,16 @@ updates:
       cargo-patch:
         update-types:
           - patch
+  # The documentation site's tooling. VitePress 2 is pinned to an exact prerelease.
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - "Type: Maintenance"
+    commit-message:
+      prefix: "Update"
   - package-ecosystem: github-actions
     directory: /
     schedule:
