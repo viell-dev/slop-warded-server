@@ -93,7 +93,10 @@ where
     type Rejection = ParamsRejection;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, ParamsRejection> {
-        let captures: &Captures = parts.extensions.get().ok_or(ParamsRejection::NoRoute)?;
+        let Some(captures) = parts.extensions.get::<Captures>() else {
+            tracing::error!("Params needs a handler that a Warded route selected");
+            return Err(ParamsRejection::NoRoute);
+        };
         // The query-string deserializer parses numbers and other types from text.
         let pairs: Vec<_> = captures
             .iter()
@@ -137,10 +140,9 @@ impl ParamsRejection {
 
 impl IntoResponse for ParamsRejection {
     fn into_response(self) -> Response {
-        if let Self::NoRoute = self {
-            tracing::error!("Params needs a handler that a Warded route selected");
-            return self.status().into_response();
+        match self {
+            Self::NoRoute => self.status().into_response(),
+            Self::Invalid(_) => (self.status(), format!("{self}\n")).into_response(),
         }
-        (self.status(), format!("{self}\n")).into_response()
     }
 }

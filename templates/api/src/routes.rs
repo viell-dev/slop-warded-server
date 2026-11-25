@@ -2,7 +2,7 @@
 
 use crate::{
     notes::{self, Notes},
-    problem::Problem,
+    problem::{self, Problem},
 };
 use axum::{Router, http::StatusCode, routing::any};
 use tower::ServiceBuilder;
@@ -40,7 +40,7 @@ pub fn app(notes: Notes) -> Result<Router, DefinitionError> {
     let middleware = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
-        .layer(CatchPanicLayer::new());
+        .layer(CatchPanicLayer::custom(problem::panicked));
     Ok(warded_server::app(routes).layer(middleware))
 }
 

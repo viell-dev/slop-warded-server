@@ -118,7 +118,8 @@ impl Server {
 
     /// Bind every listener, without accepting anything yet.
     ///
-    /// Nothing stays bound when one of them fails. Call this inside a Tokio runtime.
+    /// Nothing stays bound when one of them fails, or when the [`Limits`] are unusable. Call this
+    /// inside a Tokio runtime.
     pub fn bind(self) -> Result<BoundServer, Error> {
         self.limits.validate()?;
         let (https, quic) = self.bind_https()?;
@@ -224,9 +225,10 @@ impl BoundServer {
     /// Serve until `shutdown` completes, then let requests in progress finish.
     ///
     /// Connections that are still open when the grace period ends are closed. WebSockets and
-    /// other upgraded connections do not extend it: they are closed once everything else has
-    /// finished. Dropping the future closes all connections at once. Returns early with the error
-    /// if a listener fails.
+    /// other upgraded connections do not extend it: once everything else has finished, reading
+    /// from them or writing to them fails. To say goodbye on them, tell their handlers from
+    /// `shutdown`. Dropping the future does the same to all connections at once. Returns early
+    /// with the error if a listener fails.
     pub async fn serve_until<S>(
         self,
         app: S,

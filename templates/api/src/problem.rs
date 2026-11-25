@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use std::any::Any;
 use warded_server::{Params, ParamsRejection};
 
 /// A response that reports a problem.
@@ -38,6 +39,11 @@ impl IntoResponse for Problem {
     }
 }
 
+/// What a client gets when a handler panics.
+pub fn panicked(_: Box<dyn Any + Send>) -> Response {
+    Problem::new(StatusCode::INTERNAL_SERVER_ERROR, "something went wrong").into_response()
+}
+
 /// A JSON request body.
 #[derive(FromRequest)]
 #[from_request(via(Json), rejection(Problem))]
@@ -56,6 +62,10 @@ pub struct PathParams<T>(pub T);
 
 impl From<ParamsRejection> for Problem {
     fn from(rejection: ParamsRejection) -> Self {
-        Self::new(rejection.status(), rejection.to_string())
+        match rejection {
+            ParamsRejection::Invalid(_) => Self::new(rejection.status(), rejection.to_string()),
+            // A mistake in the routes, which the log explains.
+            _ => Self::new(rejection.status(), "something went wrong"),
+        }
     }
 }
