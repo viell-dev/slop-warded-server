@@ -101,6 +101,7 @@ A destination is any Tower service with Axum's request and response types. In pr
 | ----------------------------------------- | -------------------------------------------------- |
 | `any(handler)`                            | One handler                                        |
 | `any(handler).with_state(state)`          | One handler that uses `State`                      |
+| `handler.into_service()`                  | One handler, whose [response to HEAD](./middleware.md#the-response-to-head) layers can change |
 | `axum::routing::get(a).post(b)`           | One path with several methods, and a 405 for others |
 | `axum::Router`                            | A whole Axum application, or a Tower service in one |
 

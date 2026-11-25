@@ -10,6 +10,10 @@ Versions follow [Semantic Versioning](https://semver.org). Any prerelease may br
   which HTTP/2 clients do at a shutdown
   ([#10](https://github.com/viell-dev/slop-warded-server/issues/10)).
 - Port 0 finds a port that is free for TCP and UDP also where Windows reserves many of one of them.
+- **Templates:** pages of the `website` template answer HEAD with the head of the compressed response
+  that GET gets ([#7](https://github.com/viell-dev/slop-warded-server/issues/7)). In a project made
+  from it, replace `any(handler)` by `handler.into_service()`; see
+  [middleware](https://viell-dev.github.io/slop-warded-server/middleware.html#the-response-to-head).
 
 ## 0.1.0-alpha.1 - 2026-11-25
 

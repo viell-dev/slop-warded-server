@@ -52,9 +52,8 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
   ([#4](https://github.com/viell-dev/slop-warded-server/issues/4)).
 - **More than one certificate or HTTPS address** in one server.
 - **WebSockets over HTTP/2.** They work over HTTP/1.1.
-- **HEAD with compression.** Layers around the application see the response to HEAD after its body
-  is gone, so `CompressionLayer` leaves it alone, unlike the response to GET
-  ([#7](https://github.com/viell-dev/slop-warded-server/issues/7)).
+- **HEAD with compression** for files and for [some destinations](./middleware.md#the-response-to-head).
+  The head of the response is that of the uncompressed one.
 - **gRPC** has not been tried.
 
 ## Connections

@@ -42,7 +42,11 @@ Write `templates/about.html`:
 ```
 
 Then add its type and handler to `src/pages.rs`, like `Home` and `home`, and a route to
-`src/routes.rs`: `.route(get_or_head().and(exact_path("/about")), any(pages::about))`.
+`src/routes.rs`:
+
+```text
+.route(get_or_head().and(exact_path("/about")), pages::about.into_service())
+```
 
 Askama checks the templates when the project is built, so a missing value is a compile error. It
 escapes values, so text from visitors cannot add markup.
