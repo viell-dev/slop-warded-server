@@ -83,9 +83,10 @@ Limits protect the server from clients, not from your handlers:
 Each connection uses a file descriptor. On Linux, allow more of them than `connections`, for example
 with `LimitNOFILE` in [systemd](./deployment.md#systemd).
 
-None of them may be zero, a timeout can be at most a year, and there can be at most 10 000
-concurrent streams, because every HTTP/3 connection takes memory for them. Nothing limits how long a
-client takes to send a body or to read a response, as long as its connection is alive.
+None of them may be zero, a timeout can be at most a year, a head at most 512 KiB, and there can be
+at most 10 000 concurrent streams, because every HTTP/3 connection takes memory for them. Nothing
+limits how long a client takes to send a body or to read a response, as long as its connection is
+alive. [Limits](./limits.md#connections) adds up what a connection can hold.
 [Middleware](./middleware.md) limits bodies, time and busy handlers.
 
 ## Stopping

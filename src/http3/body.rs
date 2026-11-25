@@ -4,19 +4,25 @@
 //! normally when its body fails, so a truncated response looks complete, and `h3-util` 0.0.6
 //! cancels every request whose body the handler leaves unread.
 
-use super::{BoxError, head::declared_length};
+use super::{
+    BoxError,
+    head::declared_length,
+    transport::{Receiver, Sender},
+};
 use axum::{body::HttpBody, response::Response};
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use h3::{error::Code, server::RequestStream};
 use http_body::{Frame, SizeHint};
 use std::{
-    panic::{AssertUnwindSafe, catch_unwind},
     pin::Pin,
-    task::{Context, Poll, Waker, ready},
+    task::{Context, Poll, ready},
 };
 
-type ReceiveStream = RequestStream<h3_quinn::RecvStream, Bytes>;
-type SendStream = RequestStream<h3_quinn::SendStream<Bytes>, Bytes>;
+type ReceiveStream = RequestStream<Receiver, Bytes>;
+type SendStream = RequestStream<Sender, Bytes>;
+
+/// How much of a body to gather before the application gets it.
+const PIECE: usize = 16 * 1024;
 
 /// A request body that reads its stream only as the application asks for more.
 pub(super) struct RequestBody {
@@ -44,33 +50,50 @@ impl RequestBody {
 
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         if self.next == Next::Data {
-            if let Some(mut data) = ready!(self.stream.poll_recv_data(cx))? {
-                let data = data.copy_to_bytes(data.remaining());
-                if let Some(remaining) = &mut self.remaining {
-                    *remaining = remaining
-                        .checked_sub(data.len() as u64)
-                        .ok_or("the request body is longer than its Content-Length")?;
-                }
+            let data = ready!(self.poll_data(cx))?;
+            if !data.is_empty() {
                 return Poll::Ready(Some(Ok(Frame::data(data))));
-            }
-            self.next = Next::Trailers;
-            // h3 leaves this check (RFC 9114 section 4.1.2) to its caller, and without it a
-            // truncated request looks complete.
-            if self.remaining.is_some_and(|remaining| remaining > 0) {
-                Err("the request body is shorter than its Content-Length")?;
             }
         }
         if self.next == Next::Trailers {
-            // A stream that ends inside a DATA frame makes h3 0.0.8 panic here
-            // (https://github.com/hyperium/h3/issues/386). Any client can send one, so treat it
-            // as the malformed body that it is. Remove this with the fixed h3 release.
-            let trailers = catch_unwind(AssertUnwindSafe(|| self.stream.poll_recv_trailers(cx)))
-                .map_err(|_| "the request body ends inside a DATA frame")?;
-            let trailers = ready!(trailers)?;
+            let trailers = ready!(self.stream.poll_recv_trailers(cx))?;
             self.next = Next::End;
             return Poll::Ready(trailers.map(|trailers| Ok(Frame::trailers(trailers))));
         }
         Poll::Ready(None)
+    }
+
+    /// Gather what has arrived, which is nothing only at the end.
+    ///
+    /// This copies it, because small pieces keep all of what they were read with in memory. An
+    /// application that holds on to a limited body could otherwise hold many times the limit.
+    fn poll_data(&mut self, cx: &mut Context<'_>) -> Poll<Result<Bytes, BoxError>> {
+        let mut data = BytesMut::new();
+        while data.len() < PIECE {
+            match self.stream.poll_recv_data(cx)? {
+                Poll::Ready(Some(piece)) => {
+                    if let Some(remaining) = &mut self.remaining {
+                        *remaining = remaining
+                            .checked_sub(piece.remaining() as u64)
+                            .ok_or("the request body is longer than its Content-Length")?;
+                    }
+                    data.put(piece);
+                }
+                Poll::Ready(None) => {
+                    self.next = Next::Trailers;
+                    // h3 leaves this check (RFC 9114 section 4.1.2) to its caller, and without it
+                    // a truncated request looks complete.
+                    if self.remaining.is_some_and(|remaining| remaining > 0) {
+                        let error = "the request body is shorter than its Content-Length";
+                        return Poll::Ready(Err(error.into()));
+                    }
+                    break;
+                }
+                Poll::Pending if data.is_empty() => return Poll::Pending,
+                Poll::Pending => break,
+            }
+        }
+        Poll::Ready(Ok(data.freeze()))
     }
 }
 
@@ -100,17 +123,9 @@ impl HttpBody for RequestBody {
 }
 
 impl Drop for RequestBody {
-    /// Notice the end of a body that the application did not read, usually an empty one.
-    ///
-    /// Quinn otherwise asks the client to stop sending it. It does so with a code that HTTP/3
-    /// does not define, which clients must take for `H3_NO_ERROR` (RFC 9114 section 8). That
-    /// code cannot be sent itself: h3-quinn 0.0.10 panics when asked to stop a stream with a read
-    /// in progress (https://github.com/hyperium/h3/issues/361), and does not say if there is one.
+    /// Tell the client not to send what the application did not read.
     fn drop(&mut self) {
-        if self.next == Next::Data && !std::thread::panicking() {
-            let mut cx = Context::from_waker(Waker::noop());
-            let _ = self.stream.poll_recv_data(&mut cx);
-        }
+        self.stream.stop_sending(Code::H3_NO_ERROR);
     }
 }
 
@@ -166,7 +181,7 @@ impl Responder {
             }
         }
         if remaining.is_some_and(|remaining| remaining > 0) {
-            Err("the response is shorter than its Content-Length")?;
+            return Err("the response is shorter than its Content-Length".into());
         }
         self.stream.finish().await?;
         self.finished = true;

@@ -9,12 +9,26 @@ use axum::{
     routing::{get as axum_get, post},
 };
 use common::{
-    Authority, BoxError, Client, DATA, Running, VERSIONS, channel, chunk, frame, get,
+    Authority, BoxError, Client, DATA, Running, UNKNOWN, VERSIONS, channel, chunk, frame, get,
     headers_frame, request, text,
 };
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::{mpsc, watch},
+    task::JoinSet,
+};
 use warded_server::Limits;
+
+/// `H3_NO_ERROR` and `H3_EXCESSIVE_LOAD` (RFC 9114 section 8.1).
+const NO_ERROR: quinn::VarInt = quinn::VarInt::from_u32(0x100);
+const EXCESSIVE_LOAD: quinn::VarInt = quinn::VarInt::from_u32(0x107);
 
 /// A `content-length` field: its name from the static table and a literal value.
 fn content_length(value: &str) -> Vec<u8> {
@@ -128,6 +142,23 @@ async fn a_malformed_http3_body_is_not_a_complete_one() {
             frame(DATA, 3, b"llo"),
         ]
         .concat(),
+        // Empty DATA frames, which h3 0.0.8 takes for the end.
+        [
+            headers_frame("POST", "/echo", &content_length("5")),
+            frame(DATA, 0, b""),
+            frame(DATA, 5, b"hello"),
+            frame(DATA, 0, b""),
+        ]
+        .concat(),
+        // Frames that mean nothing, which are larger than any limit.
+        [
+            frame(UNKNOWN, 3_000_000, &[0; 3_000_000]),
+            headers_frame("POST", "/echo", &content_length("5")),
+            frame(UNKNOWN, 3_000_000, &[0; 3_000_000]),
+            frame(DATA, 5, b"hello"),
+            frame(UNKNOWN, 3_000_000, &[0; 3_000_000]),
+        ]
+        .concat(),
     ];
     for bytes in accepted {
         let client = common::http3(running.https, &authority).await.unwrap();
@@ -155,11 +186,11 @@ async fn a_malformed_http3_body_is_not_a_complete_one() {
             frame(DATA, 5, b"hello"),
         ]
         .concat(),
-        // An empty DATA frame, which h3 0.0.8 takes for the end.
+        // The stream ends inside a frame that means nothing.
         [
             headers_frame("POST", "/echo", &[]),
-            frame(DATA, 0, b""),
             frame(DATA, 5, b"hello"),
+            frame(UNKNOWN, 5, b"rest"),
         ]
         .concat(),
     ];
@@ -224,10 +255,10 @@ async fn a_truncated_http3_body_leaves_its_connection_usable() {
 async fn dropping_a_partly_read_http3_body_does_not_fail_the_request() {
     let authority = Authority::new();
     let app = axum::Router::new().fallback(|request: axum::extract::Request| async {
-        // Leaves the second piece in h3's buffer, where it hides that a read is in progress.
+        // Leaves a read in progress.
         let mut body = request.into_body();
         let first = chunk(&mut body).await.unwrap();
-        assert_eq!(first, "first");
+        assert!(first.starts_with(b"first"));
         "enough"
     });
     let running = Running::start(common::server(&authority), app);
@@ -241,6 +272,260 @@ async fn dropping_a_partly_read_http3_body_does_not_fail_the_request() {
     send.write_all(&request.concat()).await.unwrap();
     let response = common::soon(receive.read_to_end(1024)).await.unwrap();
     assert!(has_status(&response, StatusCode::OK), "{response:02x?}");
+    // The client has not finished, and is told that it need not.
+    let code = common::soon(send.stopped()).await.unwrap();
+    assert_eq!(code, Some(NO_ERROR));
+}
+
+/// Send the beginning of a frame that declares a length beyond any limit, and return the code with
+/// which the server stops it.
+async fn stopped(quic: &quinn::Connection, before: &[u8], kind: u8) -> Option<quinn::VarInt> {
+    let (mut send, _receive) = quic.open_bi().await.unwrap();
+    send.write_all(before).await.unwrap();
+    send.write_all(&frame(kind, 1 << 29, &[0; 1_000]))
+        .await
+        .unwrap();
+    common::soon(send.stopped()).await.unwrap()
+}
+
+#[tokio::test]
+async fn an_http3_frame_that_declares_too_much_is_refused_before_it_arrives() {
+    const HEADERS: u8 = 1;
+    const SETTINGS: u8 = 4;
+
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    // A head, and trailers after a body.
+    let head = headers_frame("POST", "/echo", &[]);
+    let body = [head, frame(DATA, 5, b"hello")].concat();
+    for before in [&[][..], &body] {
+        let code = stopped(&client.quic, before, HEADERS).await;
+        assert_eq!(code, Some(EXCESSIVE_LOAD));
+    }
+    let response = common::send_http3(&mut client.send, get("/"))
+        .await
+        .unwrap();
+    assert_eq!(text(response).await.unwrap(), "fine");
+
+    // A control stream, whose connection fails with it.
+    let (_endpoint, quic) = common::quic(running.https, &authority).await.unwrap();
+    let mut control = quic.open_uni().await.unwrap();
+    let settings = frame(SETTINGS, 1 << 29, &[0; 1_000]);
+    let beginning = [&[0][..], &settings].concat();
+    control.write_all(&beginning).await.unwrap();
+    common::soon(quic.closed()).await;
+}
+
+#[tokio::test]
+async fn a_head_within_twice_the_limit_gets_a_response() {
+    let authority = Authority::new();
+    let mut limits = Limits::default();
+    limits.head_bytes = 1_000;
+    let running = Running::start(common::server(&authority).limits(limits), echo());
+    let client = common::http3(running.https, &authority).await.unwrap();
+    // x: a literal name and a value of three times 126 bytes.
+    let field = [&[0x21, b'x', 126][..], &[b'x'; 126]].concat();
+    for (fields, status) in [
+        (2, StatusCode::OK),
+        (10, StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE),
+    ] {
+        let head = headers_frame("GET", "/", &field.repeat(fields));
+        let response = raw(&client.quic, &head).await.unwrap();
+        assert!(has_status(&response, status), "{response:02x?}");
+    }
+    let head = headers_frame("GET", "/", &field.repeat(20));
+    assert!(raw(&client.quic, &head).await.is_err());
+}
+
+/// Send on all streams until the server does not let the client send more, and count the bytes.
+async fn send_until_full(streams: Vec<quinn::SendStream>, data: Bytes) -> (usize, JoinSet<()>) {
+    let sent = Arc::new(AtomicUsize::new(0));
+    let mut sending = JoinSet::new();
+    for mut stream in streams {
+        let (data, sent) = (data.clone(), sent.clone());
+        sending.spawn(async move {
+            let mut rest = &data[..];
+            while !rest.is_empty() {
+                let written = stream.write(rest).await.unwrap();
+                rest = &rest[written..];
+                sent.fetch_add(written, Ordering::Relaxed);
+            }
+            // Ending it would let the handler go on.
+            std::future::pending::<()>().await;
+        });
+    }
+    common::soon(async {
+        let mut before = 0;
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            match sent.load(Ordering::Relaxed) {
+                now if now == before => return (now, sending),
+                now => before = now,
+            }
+        }
+    })
+    .await
+}
+
+#[tokio::test]
+async fn unread_http3_requests_do_not_fill_the_memory() {
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(|request: axum::extract::Request| async {
+        let _unread = request;
+        std::future::pending::<()>().await;
+    });
+    let running = Running::start(common::server(&authority), app);
+    let client = common::http3(running.https, &authority).await.unwrap();
+    // Nothing reads what DATAGRAM frames would bring.
+    assert_eq!(client.quic.max_datagram_size(), None);
+
+    let (mut streams, mut responses) = (Vec::new(), Vec::new());
+    for _ in 0..12 {
+        let (mut send, receive) = client.quic.open_bi().await.unwrap();
+        send.write_all(&headers_frame("POST", "/", &[]))
+            .await
+            .unwrap();
+        streams.push(send);
+        responses.push(receive);
+    }
+    let data = frame(DATA, 1 << 29, &[0; 1_200_000]);
+    let (sent, _sending) = send_until_full(streams, data.into()).await;
+    // All streams together hold 10 MB of these 14 MB.
+    assert!((8_000_000..11_000_000).contains(&sent), "{sent}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http3_requests_in_small_packets_do_not_fill_the_memory() {
+    const STREAMS: usize = 8;
+
+    let authority = Authority::new();
+    let (release, released) = watch::channel(false);
+    let (report, mut reports) = mpsc::unbounded_channel();
+    let app = axum::Router::new().fallback(move |request: axum::extract::Request| {
+        let (mut released, report) = (released.clone(), report.clone());
+        async move {
+            let mut body = request.into_body();
+            released.wait_for(|released| *released).await.unwrap();
+            report.send(chunk(&mut body).await.unwrap().len()).unwrap();
+            std::future::pending::<()>().await;
+        }
+    });
+    let running = Running::start(common::server(&authority), app);
+    let client = common::http3(running.https, &authority).await.unwrap();
+
+    // Quinn keeps the content of many small packets as one piece.
+    let data = frame(DATA, 60, &[0; 60]).repeat(8);
+    let (mut streams, mut responses, mut sent) = (Vec::new(), Vec::new(), 0);
+    for _ in 0..STREAMS {
+        let (mut send, receive) = client.quic.open_bi().await.unwrap();
+        send.write_all(&headers_frame("POST", "/", &[]))
+            .await
+            .unwrap();
+        for _ in 0..2_100 {
+            let frames = client.quic.stats().frame_tx.stream;
+            send.write_all(&data).await.unwrap();
+            sent += data.len();
+            while client.quic.stats().frame_tx.stream == frames {
+                tokio::task::yield_now().await;
+            }
+        }
+        streams.push(send);
+        responses.push(receive);
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Reading a little must not make room for a lot.
+    release.send(true).unwrap();
+    let mut read = 0;
+    for _ in 0..STREAMS {
+        read += common::soon(reports.recv()).await.unwrap();
+    }
+    let data = frame(DATA, 1 << 29, &[0; 3_000_000]);
+    let (more, _sending) = send_until_full(streams, data.into()).await;
+    let unread = sent + more - read;
+    assert!((8_000_000..11_000_000).contains(&unread), "{unread}");
+}
+
+#[tokio::test]
+async fn a_piece_of_an_http3_body_does_not_keep_its_packet() {
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(|request: axum::extract::Request| async {
+        let mut body = request.into_body();
+        let piece = chunk(&mut body).await.unwrap();
+        drop(body);
+        let memory = piece.try_into_mut().unwrap().capacity();
+        assert!(memory <= 64, "{memory}");
+    });
+    let running = Running::start(common::server(&authority), app);
+    let client = common::http3(running.https, &authority).await.unwrap();
+    let request = [
+        headers_frame("POST", "/", &[]),
+        frame(DATA, 1, b"a"),
+        frame(UNKNOWN, 1_000, &[0; 1_000]),
+    ];
+    let response = raw(&client.quic, &request.concat()).await.unwrap();
+    assert!(has_status(&response, StatusCode::OK), "{response:02x?}");
+}
+
+#[tokio::test]
+async fn an_http3_client_that_abandons_request_heads_is_disconnected() {
+    let authority = Authority::new();
+    let (mut sender, body) = channel();
+    let body = Arc::new(Mutex::new(Some(body)));
+    let stream = move || {
+        let body = body.lock().unwrap().take().unwrap();
+        async { Response::new(body) }
+    };
+    let app = echo().route("/stream", axum_get(stream));
+    let running = Running::start(common::server(&authority), app);
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    let abandon = async |count: usize| {
+        for _ in 0..count {
+            let (mut send, receive) = client.quic.open_bi().await?;
+            send.write_all(&[1]).await.unwrap();
+            send.reset(0x10c_u32.into()).unwrap();
+            drop(receive);
+        }
+        Ok::<_, quinn::ConnectionError>(())
+    };
+    common::soon(abandon(900)).await.unwrap();
+    let response = common::send_http3(&mut client.send, get("/stream"))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    // The connection ends like at a shutdown.
+    let _ = common::soon(abandon(200)).await;
+    sender.send_data("the beginning".into()).await.unwrap();
+    assert_eq!(chunk(&mut body).await.unwrap(), "the beginning");
+    drop(sender);
+    assert_eq!(text(Response::new(body)).await.unwrap(), "");
+    let reason = common::soon(client.quic.closed()).await;
+    let quinn::ConnectionError::ApplicationClosed(reason) = reason else {
+        panic!("{reason:?}");
+    };
+    assert_eq!(reason.error_code, NO_ERROR);
+}
+
+#[tokio::test]
+async fn an_http3_connection_outlives_requests_that_are_answered_without_the_application() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    let oversized = headers_frame("GET", "/", &[0xfa; 2_000]);
+    // A field name in upper case.
+    let malformed = headers_frame("GET", "/", &[0x21, b'X', 1, b'x']);
+    for _ in 0..1_001 {
+        let response = raw(&client.quic, &oversized).await.unwrap();
+        let expected = StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE;
+        assert!(has_status(&response, expected), "{response:02x?}");
+        assert!(raw(&client.quic, &malformed).await.is_err());
+    }
+    let response = common::send_http3(&mut client.send, get("/"))
+        .await
+        .unwrap();
+    assert_eq!(text(response).await.unwrap(), "fine");
 }
 
 #[tokio::test]
@@ -445,8 +730,8 @@ async fn the_connection_limit_covers_every_protocol() {
 async fn stalled_clients_are_disconnected() {
     let authority = Authority::new();
     let mut limits = Limits::default();
-    limits.handshake_timeout = Duration::from_millis(200);
-    limits.head_timeout = Duration::from_millis(300);
+    limits.handshake_timeout = Duration::from_secs(1);
+    limits.head_timeout = Duration::from_secs(1);
     let running = Running::start(common::server(&authority).limits(limits), echo());
 
     // No TLS handshake.

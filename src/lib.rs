@@ -36,14 +36,16 @@
 //! All are enabled by default:
 //!
 //! - `http3`: HTTP/3 over QUIC. The underlying [`h3`](https://github.com/hyperium/h3) library is
-//!   experimental and has known ways for a client to exhaust memory.
+//!   experimental and has
+//!   [known weaknesses](https://viell-dev.github.io/slop-warded-server/limits.html#http-3).
 //! - `self-signed`: `Tls::self_signed`, for development.
 //! - `warded`: `app`, `Params` and the security context.
 
 #[cfg(all(feature = "http3", panic = "abort"))]
 compile_error!(
-    "the `http3` feature needs `panic = \"unwind\"`: a client can make h3 0.0.8 panic \
-     (https://github.com/hyperium/h3/issues/386), and aborting would stop the whole server"
+    "the `http3` feature needs `panic = \"unwind\"`: h3 0.0.8 is experimental and has panicked at \
+     what clients send (https://github.com/hyperium/h3/issues/386), and aborting would stop the \
+     whole server"
 );
 
 mod context;

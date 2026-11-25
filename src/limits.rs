@@ -14,8 +14,8 @@ use std::time::Duration;
 /// limits.head_timeout = Duration::from_secs(10);
 /// ```
 ///
-/// [`Server::bind`](crate::Server::bind) refuses zeros, timeouts of more than a year, and more than
-/// 10 000 concurrent streams.
+/// [`Server::bind`](crate::Server::bind) refuses zeros, timeouts of more than a year, more than
+/// 10 000 concurrent streams, and heads of more than 512 KiB.
 ///
 /// These bound the transport, not the application. Limit request bodies, handler time and
 /// concurrent handlers with Tower middleware, because a JSON endpoint, an upload and an event
@@ -37,6 +37,8 @@ pub struct Limits {
     ///
     /// HTTP/2 and HTTP/3 count the decoded fields with 32 bytes for each, as their
     /// specifications define. HTTP/1.1 counts received bytes and rounds up to at least 8 KiB.
+    ///
+    /// Each HTTP/3 request can hold twice this in memory while its head or trailers arrive.
     ///
     /// Default: 32 KiB.
     pub head_bytes: u32,
@@ -78,6 +80,10 @@ impl Limits {
     /// QUIC prepares for every stream that a client may open when it connects.
     const MOST_STREAMS: u32 = 10_000;
 
+    /// h3 0.0.8 panics at heads of more than 24 576 fields, which this has no room for
+    /// (https://github.com/hyperium/h3/pull/377).
+    const MOST_HEAD_BYTES: u32 = 512 * 1024;
+
     /// Refuse values with which the server could not serve anything, or only at great cost.
     pub(crate) fn validate(&self) -> Result<(), Error> {
         // QUIC counts whole milliseconds, and takes 0 for no timeout.
@@ -88,7 +94,10 @@ impl Limits {
                 "concurrent_streams",
                 (1..=Self::MOST_STREAMS).contains(&self.concurrent_streams),
             ),
-            ("head_bytes", self.head_bytes > 0),
+            (
+                "head_bytes",
+                (1..=Self::MOST_HEAD_BYTES).contains(&self.head_bytes),
+            ),
             (
                 "handshake_timeout",
                 timeout.contains(&self.handshake_timeout),
@@ -115,6 +124,7 @@ mod tests {
         assert!(Limits::default().validate().is_ok());
         let largest = Limits {
             concurrent_streams: Limits::MOST_STREAMS,
+            head_bytes: Limits::MOST_HEAD_BYTES,
             handshake_timeout: Limits::LONGEST_TIMEOUT,
             head_timeout: Limits::LONGEST_TIMEOUT,
             idle_timeout: Limits::LONGEST_TIMEOUT,
@@ -122,13 +132,16 @@ mod tests {
         };
         assert!(largest.validate().is_ok());
 
-        let changes: [(&str, Change); 10] = [
+        let changes: [(&str, Change); 11] = [
             ("connections", |limits| limits.connections = 0),
             ("concurrent_streams", |limits| limits.concurrent_streams = 0),
             ("concurrent_streams", |limits| {
                 limits.concurrent_streams = u32::MAX
             }),
             ("head_bytes", |limits| limits.head_bytes = 0),
+            ("head_bytes", |limits| {
+                limits.head_bytes = Limits::MOST_HEAD_BYTES + 1
+            }),
             ("handshake_timeout", |limits| {
                 limits.handshake_timeout = Duration::ZERO
             }),

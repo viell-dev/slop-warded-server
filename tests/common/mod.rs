@@ -408,6 +408,9 @@ pub fn frame(kind: u8, length: u64, payload: &[u8]) -> Vec<u8> {
 
 pub const DATA: u8 = 0;
 
+/// A frame type that HTTP/3 reserves for frames without a meaning.
+pub const UNKNOWN: u8 = 0x21;
+
 /// The server's certificate on a new connection.
 pub async fn certificate(
     version: Version,
