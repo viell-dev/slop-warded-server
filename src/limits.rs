@@ -1,3 +1,4 @@
+use crate::Error;
 use std::time::Duration;
 
 /// Bounds on what clients can make the server hold at once.
@@ -60,6 +61,68 @@ impl Default for Limits {
             handshake_timeout: Duration::from_secs(10),
             head_timeout: Duration::from_secs(30),
             idle_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+impl Limits {
+    /// QUIC sends timeouts as whole milliseconds in 62 bits, where 0 stands for none.
+    const LONGEST_IDLE_TIMEOUT: u128 = (1 << 62) - 1;
+
+    /// Refuse values with which the server could not serve anything.
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        let idle = self.idle_timeout.as_millis();
+        for (field, usable) in [
+            ("connections", self.connections > 0),
+            ("concurrent_streams", self.concurrent_streams > 0),
+            ("head_bytes", self.head_bytes > 0),
+            ("handshake_timeout", !self.handshake_timeout.is_zero()),
+            ("head_timeout", !self.head_timeout.is_zero()),
+            (
+                "idle_timeout",
+                (1..=Self::LONGEST_IDLE_TIMEOUT).contains(&idle),
+            ),
+        ] {
+            if !usable {
+                return Err(Error::Limit { field });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Change = fn(&mut Limits);
+
+    #[test]
+    fn only_usable_limits_are_accepted() {
+        assert!(Limits::default().validate().is_ok());
+        let changes: [(&str, Change); 8] = [
+            ("connections", |limits| limits.connections = 0),
+            ("concurrent_streams", |limits| limits.concurrent_streams = 0),
+            ("head_bytes", |limits| limits.head_bytes = 0),
+            ("handshake_timeout", |limits| {
+                limits.handshake_timeout = Duration::ZERO
+            }),
+            ("head_timeout", |limits| {
+                limits.head_timeout = Duration::ZERO
+            }),
+            ("idle_timeout", |limits| {
+                limits.idle_timeout = Duration::ZERO
+            }),
+            ("idle_timeout", |limits| {
+                limits.idle_timeout = Duration::from_micros(1)
+            }),
+            ("idle_timeout", |limits| limits.idle_timeout = Duration::MAX),
+        ];
+        for (name, change) in changes {
+            let mut limits = Limits::default();
+            change(&mut limits);
+            let result = limits.validate();
+            assert!(matches!(result, Err(Error::Limit { field }) if field == name));
         }
     }
 }

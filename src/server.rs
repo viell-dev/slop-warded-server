@@ -120,6 +120,7 @@ impl Server {
     ///
     /// Nothing stays bound when one of them fails. Call this inside a Tokio runtime.
     pub fn bind(self) -> Result<BoundServer, Error> {
+        self.limits.validate()?;
         let (https, quic) = self.bind_https()?;
         let http = self
             .http
@@ -140,7 +141,8 @@ impl Server {
 
     /// Bind and serve until the process is asked to stop.
     ///
-    /// That is Ctrl+C or, on Unix, `SIGTERM`. On Unix, `SIGHUP` reloads the certificate files.
+    /// That is Ctrl+C or, on Unix, `SIGTERM`. Asking again ends the grace period at once. On
+    /// Unix, `SIGHUP` reloads the certificate files.
     /// Use [`Server::bind`] and [`BoundServer::serve_until`] to decide both yourself.
     pub async fn serve<S>(self, app: S) -> Result<(), Error>
     where
@@ -149,7 +151,9 @@ impl Server {
         S::Future: Send + 'static,
     {
         let _reload = signal::reload_on_hangup(&self.tls);
-        self.bind()?.serve_until(app, signal::shutdown()).await
+        self.bind()?
+            .run(app, signal::shutdown(), signal::shutdown())
+            .await
     }
 
     #[cfg(feature = "http3")]
@@ -219,12 +223,29 @@ impl BoundServer {
 
     /// Serve until `shutdown` completes, then let requests in progress finish.
     ///
-    /// Connections that are still open when the grace period ends are closed. Dropping the
-    /// future closes all of them at once. Returns early with the error if a listener fails.
+    /// Connections that are still open when the grace period ends are closed. WebSockets and
+    /// other upgraded connections do not extend it: they are closed once everything else has
+    /// finished. Dropping the future closes all connections at once. Returns early with the error
+    /// if a listener fails.
     pub async fn serve_until<S>(
         self,
         app: S,
         shutdown: impl Future<Output = ()> + Send,
+    ) -> Result<(), Error>
+    where
+        S: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
+        S::Response: IntoResponse,
+        S::Future: Send + 'static,
+    {
+        self.run(app, shutdown, std::future::pending()).await
+    }
+
+    /// Serve until `shutdown` completes, and drain until `force` completes.
+    async fn run<S>(
+        self,
+        app: S,
+        shutdown: impl Future<Output = ()> + Send,
+        force: impl Future<Output = ()> + Send,
     ) -> Result<(), Error>
     where
         S: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
@@ -241,6 +262,10 @@ impl BoundServer {
         // whatever kind of service the application is.
         let app = axum::Router::new().fallback_service(app);
         let public_port = self.server.public_port.unwrap_or(self.https_addr.port());
+        #[cfg(feature = "http3")]
+        let advertise = self.quic.is_some();
+        #[cfg(not(feature = "http3"))]
+        let advertise = false;
 
         let slots = Arc::new(Semaphore::new(
             limits.connections.min(Semaphore::MAX_PERMITS),
@@ -250,24 +275,9 @@ impl BoundServer {
             limits: limits.clone(),
             slots: slots.clone(),
             control: stopping.tcp.clone(),
+            abort: stopping.abort.clone(),
         });
         let mut listeners = JoinSet::new();
-
-        #[cfg(feature = "http3")]
-        let advertise = if let Some(socket) = self.quic {
-            let http3 = crate::http3::Http3 {
-                endpoint: crate::http3::endpoint(socket, &tls, &limits)?,
-                limits: limits.clone(),
-                slots: slots.clone(),
-            };
-            let (stop, abort) = (stopping.quic.clone(), stopping.abort_quic.clone());
-            listeners.spawn(http3.serve(app.clone(), stop, abort));
-            true
-        } else {
-            false
-        };
-        #[cfg(not(feature = "http3"))]
-        let advertise = false;
 
         if let (Some(listener), Some((_, cleartext))) = (self.http, self.server.http) {
             let app = match cleartext {
@@ -278,11 +288,22 @@ impl BoundServer {
             listeners.spawn(async move { tcp::serve_http(listener, app, &shared).await });
         }
 
+        // HTTP/3 clients also need to hear that it is still there.
         let app = if advertise {
             advertise_http3(app, public_port)
         } else {
             app
         };
+        #[cfg(feature = "http3")]
+        if let Some(socket) = self.quic {
+            let http3 = crate::http3::Http3 {
+                endpoint: crate::http3::endpoint(socket, &tls, &limits)?,
+                limits: limits.clone(),
+                slots: slots.clone(),
+            };
+            let (stop, abort) = (stopping.quic.clone(), stopping.abort.clone());
+            listeners.spawn(http3.serve(app.clone(), stop, abort));
+        }
         let https = self.https;
         listeners.spawn(async move { tcp::serve_https(https, &tls, app, &shared).await });
 
@@ -301,15 +322,17 @@ impl BoundServer {
 
         tracing::info!(?grace_period, "shutting down");
         stopping.begin();
-        let drained = tokio::time::timeout(grace_period, async {
-            while listeners.join_next().await.is_some() {}
-        });
-        if drained.await.is_err() {
+        let drained = tokio::select! {
+            () = async { while listeners.join_next().await.is_some() {} } => true,
+            () = tokio::time::sleep(grace_period) => false,
+            () = force => false,
+        };
+        if !drained {
             let open = limits.connections.saturating_sub(slots.available_permits());
-            tracing::warn!(open, "the grace period ended with connections open");
-            stopping.abort();
-            while listeners.join_next().await.is_some() {}
+            tracing::warn!(open, "closing connections that are still open");
         }
+        stopping.abort();
+        while listeners.join_next().await.is_some() {}
         result
     }
 }
@@ -319,7 +342,7 @@ impl BoundServer {
 struct Stopping {
     tcp: Control,
     quic: CancellationToken,
-    abort_quic: CancellationToken,
+    abort: CancellationToken,
 }
 
 impl Stopping {
@@ -331,7 +354,7 @@ impl Stopping {
 
     fn abort(&self) {
         self.tcp.shutdown();
-        self.abort_quic.cancel();
+        self.abort.cancel();
     }
 }
 

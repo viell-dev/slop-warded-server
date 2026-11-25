@@ -7,6 +7,7 @@ use crate::{
 use axum_server::{Control, Handle, accept::Accept, tls_rustls::RustlsConfig};
 use std::{
     convert::Infallible,
+    future::Future,
     io,
     net::{SocketAddr, TcpListener},
     pin::Pin,
@@ -18,6 +19,7 @@ use tokio::{
     net::TcpStream,
     sync::{OwnedSemaphorePermit, Semaphore},
 };
+use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tower::service_fn;
 
 /// What both TCP listeners need to run.
@@ -25,6 +27,16 @@ pub(crate) struct Shared {
     pub(crate) limits: Limits,
     pub(crate) slots: Arc<Semaphore>,
     pub(crate) control: Control,
+    pub(crate) abort: CancellationToken,
+}
+
+impl Shared {
+    fn admit(&self) -> Admit {
+        Admit {
+            slots: self.slots.clone(),
+            abort: self.abort.clone(),
+        }
+    }
 }
 
 /// Serve HTTPS until the shared control stops it and its connections have ended.
@@ -45,7 +57,7 @@ pub(crate) async fn serve_https(
         .map(|acceptor| {
             acceptor
                 .handshake_timeout(shared.limits.handshake_timeout)
-                .acceptor(Admit(shared.slots.clone()))
+                .acceptor(shared.admit())
         });
     server = server.accept_error_handler(|peer, error| {
         tracing::debug!(?peer, %error, "a TCP connection did not become HTTPS");
@@ -65,7 +77,7 @@ pub(crate) async fn serve_http(
     let listener = axum_server::from_tcp(listener).map_err(stopped(HTTP))?;
     configure(listener, &shared.limits)
         .handle(Handle::with_control(shared.control.clone()))
-        .acceptor(Admit(shared.slots.clone()))
+        .acceptor(shared.admit())
         .accept_error_handler(|peer, error| {
             tracing::debug!(?peer, %error, "a TCP connection was not accepted");
         })
@@ -118,7 +130,10 @@ fn connections(
 
 /// Takes one of the server's connection slots, or closes the connection when none is free.
 #[derive(Clone)]
-struct Admit(Arc<Semaphore>);
+struct Admit {
+    slots: Arc<Semaphore>,
+    abort: CancellationToken,
+}
 
 impl<S> Accept<TcpStream, S> for Admit {
     type Stream = Admitted;
@@ -126,10 +141,14 @@ impl<S> Accept<TcpStream, S> for Admit {
     type Future = std::future::Ready<io::Result<(Admitted, S)>>;
 
     fn accept(&self, stream: TcpStream, service: S) -> Self::Future {
-        std::future::ready(match self.0.clone().try_acquire_owned() {
+        std::future::ready(match self.slots.clone().try_acquire_owned() {
             Ok(slot) => stream.set_nodelay(true).map(|()| {
+                // Every connection polls a token of its own, so that they do not share a lock.
+                let abort = self.abort.child_token();
                 let stream = Admitted {
                     stream,
+                    abort_read: Box::pin(abort.clone().cancelled_owned()),
+                    abort_write: Box::pin(abort.cancelled_owned()),
                     _slot: slot,
                 };
                 (stream, service)
@@ -139,10 +158,26 @@ impl<S> Accept<TcpStream, S> for Admit {
     }
 }
 
-/// A connection that gives its slot back when it closes, including after a protocol upgrade.
+/// A connection that gives its slot back when it closes, and fails when the server aborts.
+///
+/// Neither depends on `axum-server`, which loses sight of a connection that is upgraded.
 struct Admitted {
     stream: TcpStream,
+    abort_read: Pin<Box<WaitForCancellationFutureOwned>>,
+    abort_write: Pin<Box<WaitForCancellationFutureOwned>>,
     _slot: OwnedSemaphorePermit,
+}
+
+impl Admitted {
+    fn poll_aborted(
+        abort: Pin<&mut WaitForCancellationFutureOwned>,
+        cx: &mut Context<'_>,
+    ) -> io::Result<()> {
+        match abort.poll(cx) {
+            Poll::Ready(()) => Err(io::ErrorKind::ConnectionAborted.into()),
+            Poll::Pending => Ok(()),
+        }
+    }
 }
 
 impl AsyncRead for Admitted {
@@ -151,6 +186,7 @@ impl AsyncRead for Admitted {
         cx: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        Self::poll_aborted(self.abort_read.as_mut(), cx)?;
         Pin::new(&mut self.stream).poll_read(cx, buffer)
     }
 }
@@ -161,6 +197,7 @@ impl AsyncWrite for Admitted {
         cx: &mut Context<'_>,
         bytes: &[u8],
     ) -> Poll<io::Result<usize>> {
+        Self::poll_aborted(self.abort_write.as_mut(), cx)?;
         Pin::new(&mut self.stream).poll_write(cx, bytes)
     }
 
@@ -169,6 +206,7 @@ impl AsyncWrite for Admitted {
         cx: &mut Context<'_>,
         slices: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
+        Self::poll_aborted(self.abort_write.as_mut(), cx)?;
         Pin::new(&mut self.stream).poll_write_vectored(cx, slices)
     }
 
