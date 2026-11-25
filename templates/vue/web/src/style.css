@@ -1,0 +1,61 @@
+:root {
+  --accent: light-dark(#b3411d, #ff9d73);
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 1rem;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+}
+
+main {
+  padding-block: 4rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1 {
+  font-size: clamp(2.5rem, 8vw, 4.5rem);
+  line-height: 1;
+  margin: 0;
+}
+
+button {
+  background: var(--accent);
+  border: 0;
+  border-radius: 0.5rem;
+  color: light-dark(white, black);
+  cursor: pointer;
+  font: inherit;
+  padding: 0.5rem 1rem;
+}
+
+.cards {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  list-style: none;
+  margin-block: 3rem;
+  padding: 0;
+}
+
+.cards li {
+  border: 1px solid color-mix(in srgb, currentcolor 20%, transparent);
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+.cards a {
+  display: block;
+  font-weight: 600;
+}

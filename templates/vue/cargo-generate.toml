@@ -1,0 +1,3 @@
+[template]
+# Vue's own placeholders look like cargo-generate's.
+exclude = ["web/src/*"]

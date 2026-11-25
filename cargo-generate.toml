@@ -1,4 +1,4 @@
 # `cargo generate viell-dev/slop-warded-server` offers these as project templates.
 [template]
 cargo_generate_version = ">=0.26.0"
-sub_templates = ["templates/minimal", "templates/api", "templates/website"]
+sub_templates = ["templates/minimal", "templates/api", "templates/website", "templates/leptos", "templates/vue", "templates/yew"]

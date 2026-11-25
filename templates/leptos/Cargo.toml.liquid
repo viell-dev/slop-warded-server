@@ -1,0 +1,59 @@
+[package]
+name = "{{project-name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+leptos = "0.8.23"
+leptos_meta = "0.8"
+leptos_router = "0.8"
+serde = { version = "1", features = ["derive"] }
+# The browser's part:
+console_error_panic_hook = { version = "0.1", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+# The server's part:
+axum = { version = "0.8.9", optional = true }
+leptos_axum = { version = "0.8", optional = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.1", optional = true }
+
+[features]
+hydrate = ["leptos/hydrate", "dep:console_error_panic_hook", "dep:wasm-bindgen"]
+ssr = [
+    "leptos/ssr",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
+    "dep:axum",
+    "dep:leptos_axum",
+    "dep:tokio",
+    "dep:tracing-subscriber",
+    "dep:warded-server",
+]
+
+# Small files for the browser. The server must not use `panic = "abort"`.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.leptos]
+output-name = "{{project-name}}"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+style-file = "style/main.css"
+assets-dir = "public"
+# Where the site is during development, without HTTPS. cargo-leptos waits for it before it reloads
+# the browser.
+site-addr = "127.0.0.1:3000"
+reload-port = 3001
+bin-features = ["ssr"]
+lib-features = ["hydrate"]
+lib-profile-release = "wasm-release"
