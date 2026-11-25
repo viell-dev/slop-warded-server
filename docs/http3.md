@@ -111,7 +111,7 @@ that heard of it before fall back to HTTP/2. To leave its code out, turn off the
 ```toml
 [dependencies.warded-server]
 git = "https://github.com/viell-dev/slop-warded-server"
-tag = "0.1.0-alpha.1"
+tag = "0.1.0-alpha.2"
 default-features = false
 features = ["self-signed", "warded"]
 ```

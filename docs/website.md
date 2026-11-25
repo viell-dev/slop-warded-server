@@ -7,7 +7,7 @@ description: "Build a website with pages rendered on the server, static files, l
 Start from the `website` template:
 
 ```sh
-cargo generate viell-dev/slop-warded-server templates/website --tag 0.1.0-alpha.1 --name my-site
+cargo generate viell-dev/slop-warded-server templates/website --tag 0.1.0-alpha.2 --name my-site
 cd my-site
 cargo run
 ```

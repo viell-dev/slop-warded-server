@@ -20,11 +20,11 @@ You need Rust 1.99.1 or later and
 
 ```sh
 cargo install cargo-generate --locked
-cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.1
+cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.2
 ```
 
 It asks which template to use and what to call the project. To skip the first question, name the
-template: `cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.1`.
+template: `cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.2`.
 
 | Template            | What you get                                                           |
 | ------------------- | ---------------------------------------------------------------------- |

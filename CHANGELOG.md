@@ -2,7 +2,11 @@
 
 Versions follow [Semantic Versioning](https://semver.org). Any prerelease may break compatibility.
 
-## Unreleased
+## 0.1.0-alpha.2 - 2026-11-25
+
+HTTP/3 no longer lets a client fill the memory, and fewer responses are lost. The server is still not
+for the open internet: this is an alpha, and HTTP/3 rests on an experimental library with
+[known weaknesses](https://viell-dev.github.io/slop-warded-server/limits.html#http-3).
 
 - **Security:** what an HTTP/3 client can make the server hold in memory is bounded
   ([#3](https://github.com/viell-dev/slop-warded-server/issues/3)). Frames that declare too much are
@@ -12,7 +16,7 @@ Versions follow [Semantic Versioning](https://semver.org). Any prerelease may br
   read ([#15](https://github.com/viell-dev/slop-warded-server/issues/15)). The rest of the upload is
   discarded, until the client has been silent for five seconds or for 30 seconds, and a shutdown waits
   for that within its grace period, as it does for bodies that the application still has.
-- Over HTTP/3, the code with which a client is told to stop says why, and is no longer 0.
+- Over HTTP/3, a client that need not send the rest of a body is told so with a code that says why.
 - On Linux, UDP receive offload is turned off for HTTP/3, because of the memory that it can take. Fast
   uploads are somewhat slower.
 - HTTP/3 request bodies may contain empty DATA frames.
