@@ -4,9 +4,9 @@ Releases are Git tags with a GitHub release; no package registry is an agreed ch
 SemVer prereleases without a `v` prefix, and alpha lasts while features, configuration or templates
 still change.
 
-1. On a branch, set the version in `Cargo.toml`, in the `tag` of every `templates/*/Cargo.toml`, and
-   in the README. Give the changelog's unreleased section the version and date.
-   `scripts/check.sh` fails while they differ.
+1. On a branch, set the version in `Cargo.toml`, in the `tag` of every
+   `templates/*/Cargo.toml.liquid`, and in the README. Give the changelog's unreleased section the
+   version and date. `scripts/check.sh` fails while they differ.
 2. Run the checks below on Linux, and record them in the pull request.
 3. Have the changes since the previous release reviewed independently, and settle the findings.
 4. After the pull request is merged and CI has passed on `main`, tag exactly that commit and push the
