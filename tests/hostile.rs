@@ -1,0 +1,391 @@
+//! Clients and applications that misbehave.
+
+mod common;
+
+use axum::{
+    body::{Body, Bytes},
+    http::{HeaderValue, StatusCode, Version, header},
+    response::Response,
+    routing::{get as axum_get, post},
+};
+use common::{Authority, BoxError, Client, Running, VERSIONS, channel, chunk, get, request, text};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use warded_server::Limits;
+
+/// `GET` or `POST` `https://localhost/…`, with any more encoded fields, as one HEADERS frame.
+fn headers_frame(method: &str, path: &str, more: &[u8]) -> Vec<u8> {
+    // The QPACK prefix for no dynamic table, then :scheme https from the static table.
+    let mut block = vec![0, 0, 0xd7];
+    block.push(match method {
+        "GET" => 0xd1,
+        "POST" => 0xd4,
+        _ => unimplemented!(),
+    });
+    // :authority and :path with their names from the static table and literal values.
+    for (name, value) in [(0x50, "localhost"), (0x51, path)] {
+        block.push(name);
+        block.push(value.len().try_into().unwrap());
+        block.extend_from_slice(value.as_bytes());
+    }
+    block.extend_from_slice(more);
+    frame(1, block.len() as u64, &block)
+}
+
+/// An HTTP/3 frame that declares this length, whatever its payload holds.
+fn frame(kind: u8, length: u64, payload: &[u8]) -> Vec<u8> {
+    let mut frame = vec![kind];
+    if length < 64 {
+        frame.push(length as u8);
+    } else {
+        frame.extend_from_slice(&(length as u32 | 0x8000_0000).to_be_bytes());
+    }
+    frame.extend_from_slice(payload);
+    frame
+}
+
+const DATA: u8 = 0;
+
+/// A `content-length` field: its name from the static table and a literal value.
+fn content_length(value: &str) -> Vec<u8> {
+    let mut field = vec![0x54, value.len().try_into().unwrap()];
+    field.extend_from_slice(value.as_bytes());
+    field
+}
+
+/// Send bytes on a request stream, end it, and return everything the server sends back.
+async fn raw(quic: &quinn::Connection, bytes: &[u8]) -> Result<Vec<u8>, BoxError> {
+    common::soon(async {
+        let (mut send, mut receive) = quic.open_bi().await?;
+        send.write_all(bytes).await?;
+        send.finish()?;
+        Ok(receive.read_to_end(1 << 20).await?)
+    })
+    .await
+}
+
+/// Whether a raw response begins with a HEADERS frame whose status field is this one.
+///
+/// h3 encodes the statuses used here as an index into QPACK's static table, or with their name
+/// from it and a literal value.
+fn has_status(response: &[u8], status: StatusCode) -> bool {
+    let indexed = match status {
+        StatusCode::OK => Some(0xd9),
+        StatusCode::BAD_REQUEST => Some(0xff),
+        _ => None,
+    };
+    let literal = status.as_str().as_bytes();
+    let head = &response[..response.len().min(24)];
+    head.first() == Some(&1)
+        && (indexed.is_some_and(|byte| head.contains(&byte))
+            || head.windows(literal.len()).any(|window| window == literal)
+            || huffman(status)
+                .is_some_and(|coded| head.windows(coded.len()).any(|window| window == coded)))
+}
+
+/// The Huffman coding of a status, where h3 uses it.
+fn huffman(status: StatusCode) -> Option<&'static [u8]> {
+    match status {
+        StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE => Some(&[0x69, 0x90, 0xff]),
+        _ => None,
+    }
+}
+
+fn echo() -> axum::Router {
+    axum::Router::new()
+        .route("/", axum_get(|| async { "fine" }))
+        .route("/echo", post(|body: Bytes| async move { body }))
+}
+
+#[tokio::test]
+async fn an_oversized_head_is_refused() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    for version in [Version::HTTP_11, Version::HTTP_2] {
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        let mut request = get("/");
+        let value = HeaderValue::try_from("x".repeat(40_000)).unwrap();
+        request.headers_mut().insert("x-large", value);
+        let response = client.send(request).await.unwrap();
+        let expected = StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE;
+        assert_eq!(response.status(), expected, "{version:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_small_http3_head_that_decodes_to_a_large_one_is_refused() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let (_endpoint, _) = common::quic(running.https, &authority).await.unwrap();
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    // Each byte is a whole strict-transport-security field.
+    let accordion = headers_frame("GET", "/", &[0xfa; 2_000]);
+    let response = raw(&client.quic, &accordion).await.unwrap();
+    assert!(
+        has_status(&response, StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE),
+        "{response:02x?}"
+    );
+    // The control: a head within the limit, and other requests on the same connection.
+    let response = raw(&client.quic, &headers_frame("GET", "/", &[0xfa; 20])).await;
+    assert!(has_status(&response.unwrap(), StatusCode::OK));
+    let response = common::send_http3(&mut client.send, get("/"))
+        .await
+        .unwrap();
+    assert_eq!(text(response).await.unwrap(), "fine");
+}
+
+#[tokio::test]
+async fn a_malformed_http3_body_is_not_a_complete_one() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let accepted = [
+        // Complete bodies, with and without a declared length.
+        [
+            headers_frame("POST", "/echo", &[]),
+            frame(DATA, 5, b"hello"),
+        ]
+        .concat(),
+        [
+            headers_frame("POST", "/echo", &content_length("5")),
+            frame(DATA, 5, b"hello"),
+        ]
+        .concat(),
+        [
+            headers_frame("POST", "/echo", &content_length("5")),
+            frame(DATA, 2, b"he"),
+            frame(DATA, 3, b"llo"),
+        ]
+        .concat(),
+    ];
+    for bytes in accepted {
+        let client = common::http3(running.https, &authority).await.unwrap();
+        let response = raw(&client.quic, &bytes).await.unwrap();
+        assert!(has_status(&response, StatusCode::OK), "{bytes:02x?}");
+        // Grease frames may surround the DATA frame.
+        assert!(response.windows(5).any(|window| window == b"hello"));
+    }
+    let malformed = [
+        // The stream ends inside a DATA frame: without any of it, and with a part.
+        [headers_frame("POST", "/echo", &[]), frame(DATA, 22, b"")].concat(),
+        [
+            headers_frame("POST", "/echo", &[]),
+            frame(DATA, 22, b"hello"),
+        ]
+        .concat(),
+        // The body is shorter and longer than declared.
+        [
+            headers_frame("POST", "/echo", &content_length("6")),
+            frame(DATA, 5, b"hello"),
+        ]
+        .concat(),
+        [
+            headers_frame("POST", "/echo", &content_length("4")),
+            frame(DATA, 5, b"hello"),
+        ]
+        .concat(),
+        // An empty DATA frame, which h3 0.0.8 takes for the end.
+        [
+            headers_frame("POST", "/echo", &[]),
+            frame(DATA, 0, b""),
+            frame(DATA, 5, b"hello"),
+        ]
+        .concat(),
+    ];
+    for bytes in malformed {
+        let client = common::http3(running.https, &authority).await.unwrap();
+        // Either an error response or an HTTP/3 error, but never the echo of a partial body.
+        if let Ok(response) = raw(&client.quic, &bytes).await {
+            assert!(!has_status(&response, StatusCode::OK), "{response:02x?}");
+        }
+    }
+    // Nothing above harmed the server.
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    let response = common::send_http3(&mut client.send, get("/"))
+        .await
+        .unwrap();
+    assert_eq!(text(response).await.unwrap(), "fine");
+}
+
+#[tokio::test]
+async fn a_truncated_http3_body_leaves_its_connection_usable() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    let truncated = [headers_frame("POST", "/echo", &[]), frame(DATA, 22, b"")].concat();
+    let response = raw(&client.quic, &truncated).await.unwrap();
+    assert!(
+        has_status(&response, StatusCode::BAD_REQUEST),
+        "{response:02x?}"
+    );
+    let response = common::send_http3(&mut client.send, get("/"))
+        .await
+        .unwrap();
+    assert_eq!(text(response).await.unwrap(), "fine");
+}
+
+#[tokio::test]
+async fn a_failed_response_body_is_not_a_complete_one() {
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(|| async {
+        let (mut sender, body) = channel();
+        tokio::spawn(async move {
+            sender.send_data("the beginning".into()).await.unwrap();
+            // Let the beginning go out on its own.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            sender.abort("the source failed".into());
+        });
+        Response::new(body)
+    });
+    let running = Running::start(common::server(&authority), app);
+    for version in VERSIONS {
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        let mut body = client.get("/").await.unwrap().into_body();
+        assert_eq!(chunk(&mut body).await.unwrap(), "the beginning");
+        assert!(text(Response::new(body)).await.is_err(), "{version:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_handler_fails_only_its_request() {
+    async fn panicking() {
+        panic!("expected by the test")
+    }
+
+    let authority = Authority::new();
+    let app = echo().route("/panic", axum_get(panicking));
+    let running = Running::start(common::server(&authority), app);
+    for version in VERSIONS {
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        assert!(client.get("/panic").await.is_err(), "{version:?}");
+        // HTTP/1.1 has only its connection to report the failure with.
+        if version == Version::HTTP_11 {
+            client = Client::connect(version, running.https, &authority)
+                .await
+                .unwrap();
+        }
+        let response = client.get("/").await.unwrap();
+        assert_eq!(text(response).await.unwrap(), "fine", "{version:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_connection_limit_covers_every_protocol() {
+    let authority = Authority::new();
+    for held in VERSIONS {
+        let mut limits = Limits::default();
+        limits.connections = 1;
+        let server = common::server(&authority).limits(limits);
+        let running = Running::start(server, echo());
+        let mut client = Client::connect(held, running.https, &authority)
+            .await
+            .unwrap();
+        client.get("/").await.unwrap();
+        for refused in VERSIONS {
+            let result = Client::connect(refused, running.https, &authority).await;
+            assert!(result.is_err(), "{refused:?} beside {held:?}");
+        }
+        match client {
+            Client::Http3(client) => client.close().await,
+            tcp => drop(tcp),
+        }
+        // The slot comes back once the server sees the connection close.
+        common::soon(async {
+            while Client::connect(held, running.https, &authority)
+                .await
+                .is_err()
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn stalled_clients_are_disconnected() {
+    let authority = Authority::new();
+    let mut limits = Limits::default();
+    limits.handshake_timeout = Duration::from_millis(200);
+    limits.head_timeout = Duration::from_millis(300);
+    let running = Running::start(common::server(&authority).limits(limits), echo());
+
+    // No TLS handshake.
+    let mut stream = tokio::net::TcpStream::connect(running.https).await.unwrap();
+    assert_eq!(common::soon(stream.read(&mut [0; 16])).await.unwrap(), 0);
+
+    // A partial HTTP/1.1 head.
+    let mut stream = common::tls(running.https, &authority, b"http/1.1")
+        .await
+        .unwrap();
+    stream.write_all(b"GET / HTTP/1.1\r\nHost:").await.unwrap();
+    let mut answer = Vec::new();
+    let _ = common::soon(stream.read_to_end(&mut answer)).await;
+    assert!(!answer.starts_with(b"HTTP/1.1 200"));
+
+    // A partial HTTP/3 head, on a connection that stays usable.
+    let mut client = common::http3(running.https, &authority).await.unwrap();
+    let (mut send, mut receive) = client.quic.open_bi().await.unwrap();
+    let head = headers_frame("GET", "/", &[]);
+    send.write_all(&head[..head.len() - 1]).await.unwrap();
+    let answer = common::soon(receive.read_to_end(1024)).await;
+    assert!(answer.is_err() || answer.unwrap().is_empty());
+    let response = common::send_http3(&mut client.send, get("/"))
+        .await
+        .unwrap();
+    assert_eq!(text(response).await.unwrap(), "fine");
+}
+
+#[tokio::test]
+async fn other_protocols_are_refused() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), echo());
+    let connector =
+        tokio_rustls::TlsConnector::from(std::sync::Arc::new(authority.client_config(b"spdy/3")));
+    let stream = tokio::net::TcpStream::connect(running.https).await.unwrap();
+    let name = "localhost".try_into().unwrap();
+    assert!(connector.connect(name, stream).await.is_err());
+
+    let config = authority.client_config(b"not-http");
+    let config = quinn::crypto::rustls::QuicClientConfig::try_from(config).unwrap();
+    let endpoint = quinn::Endpoint::client(([127, 0, 0, 1], 0).into()).unwrap();
+    let config = quinn::ClientConfig::new(std::sync::Arc::new(config));
+    let connecting = endpoint
+        .connect_with(config, running.https, "localhost")
+        .unwrap();
+    assert!(common::soon(connecting).await.is_err());
+}
+
+#[tokio::test]
+async fn forwarding_fields_do_not_change_the_security_context() {
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(
+        |axum::Extension(security): axum::Extension<warded::TransportSecurity>| async move {
+            format!("{security:?}")
+        },
+    );
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, app);
+    let response = common::cleartext(
+        running.http.unwrap(),
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
+         X-Forwarded-Proto: https\r\nForwarded: proto=https\r\n\r\n",
+    )
+    .await;
+    assert!(response.ends_with("Unsecure"), "{response}");
+    for version in VERSIONS {
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        let mut request = request("GET", "/", Body::empty());
+        let value = HeaderValue::from_static("proto=http");
+        request.headers_mut().insert(header::FORWARDED, value);
+        let response = client.send(request).await.unwrap();
+        assert_eq!(text(response).await.unwrap(), "Https");
+    }
+}

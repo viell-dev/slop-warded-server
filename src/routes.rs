@@ -1,0 +1,138 @@
+use axum::{
+    body::Body,
+    error_handling::HandleError,
+    extract::{FromRequestParts, Request},
+    http::{StatusCode, request::Parts},
+    response::{IntoResponse, Response},
+};
+use percent_encoding::percent_decode_str;
+use serde::de::DeserializeOwned;
+use std::convert::Infallible;
+use tower::Service;
+use warded::{Captures, DispatchError, MatchError};
+
+/// Turn Warded routes into an Axum router that a [`Server`](crate::Server) can serve.
+///
+/// A routing error becomes a response: 400 when a route declared a malformed header to be an
+/// error, and 500 otherwise, with the reason logged. Add layers to the returned router for
+/// middleware that should also see unmatched requests.
+///
+/// ```
+/// use warded_server::{axum::{Router, routing::any}, warded::{self, Matcher, matchers}};
+///
+/// async fn home() -> &'static str {
+///     "Hello"
+/// }
+///
+/// let routes = warded::Router::new()
+///     .route(matchers::get().and(matchers::exact_path("/")), any(home));
+/// let app: Router = warded_server::app(routes);
+/// ```
+pub fn app<R>(routes: R) -> axum::Router
+where
+    R: Service<Request, Response = Response<Body>, Error = DispatchError<Infallible>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    R::Future: Send + 'static,
+{
+    axum::Router::new().fallback_service(HandleError::new(routes, respond))
+}
+
+async fn respond(error: DispatchError<Infallible>) -> StatusCode {
+    match error {
+        DispatchError::Match(error @ MatchError::InvalidHeader { .. }) => {
+            tracing::debug!(%error, "refused a request");
+            StatusCode::BAD_REQUEST
+        }
+        error => {
+            tracing::error!(%error, "could not select a route");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+/// An extractor for the path captures of the selected Warded route.
+///
+/// The fields of `T` are the capture names. Values are percent-decoded and then parsed, so a
+/// number in the path can be a number in `T`. A value that does not parse gets a 400 response.
+/// Axum's `Path` extractor does not see Warded's captures.
+///
+/// ```
+/// use serde::Deserialize;
+/// use warded_server::{
+///     Params,
+///     axum::routing::any,
+///     warded::{Router, matchers::path},
+/// };
+///
+/// #[derive(Deserialize)]
+/// struct OrderParams {
+///     id: u64,
+/// }
+///
+/// async fn show_order(Params(order): Params<OrderParams>) -> String {
+///     format!("order {}", order.id)
+/// }
+///
+/// # fn main() -> Result<(), warded_server::warded::DefinitionError> {
+/// let routes = Router::new().route(path("/orders/{id}")?, any(show_order));
+/// # let _ = warded_server::app(routes);
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct Params<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for Params<T>
+where
+    T: DeserializeOwned,
+    S: Sync,
+{
+    type Rejection = ParamsRejection;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, ParamsRejection> {
+        let captures: &Captures = parts.extensions.get().ok_or(ParamsRejection::NoRoute)?;
+        // The query-string deserializer parses numbers and other types from text.
+        let pairs: Vec<_> = captures
+            .iter()
+            .map(|(name, value)| {
+                percent_decode_str(value)
+                    .decode_utf8()
+                    .map(|value| (name, value))
+                    .map_err(|_| ParamsRejection::Invalid(format!("`{name}` is not UTF-8")))
+            })
+            .collect::<Result<_, _>>()?;
+        let pairs =
+            serde_urlencoded::to_string(pairs).expect("pairs of strings are a valid query string");
+        serde_urlencoded::from_str(&pairs)
+            .map(Self)
+            .map_err(|error| ParamsRejection::Invalid(error.to_string()))
+    }
+}
+
+/// Why [`Params`] refused a request.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ParamsRejection {
+    /// No Warded route selected this handler. This is a mistake in the application.
+    NoRoute,
+    /// The captured values do not form the expected type.
+    Invalid(String),
+}
+
+impl IntoResponse for ParamsRejection {
+    fn into_response(self) -> Response {
+        match self {
+            Self::NoRoute => {
+                tracing::error!("Params needs a handler that a Warded route selected");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Self::Invalid(reason) => {
+                let body = format!("Invalid path: {reason}\n");
+                (StatusCode::BAD_REQUEST, body).into_response()
+            }
+        }
+    }
+}
