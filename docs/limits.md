@@ -8,7 +8,8 @@ release, 0.0.8, has these open defects:
 - **Memory exhaustion.** A client can declare a huge frame and make the server hold all of it in
   memory for as long as it keeps sending
   ([h3#366](https://github.com/hyperium/h3/pull/366)). `Limits::head_timeout` ends this on request
-  streams, but not on a connection's control stream. Nothing here bounds it.
+  streams, but not on a connection's control stream. Nothing here bounds it
+  ([#3](https://github.com/viell-dev/slop-warded-server/issues/3)).
 - **Cancelled requests.** A handler is not cancelled when the client gives up on one request, only
   when the whole connection ends ([h3#352](https://github.com/hyperium/h3/issues/352)).
 - **Empty DATA frames.** A request body that contains one fails
