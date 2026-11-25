@@ -1,0 +1,34 @@
+# cargo-deny policy for the resolved dependency graph, including dev dependencies. See
+# https://embarkstudios.github.io/cargo-deny/ for each field.
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on vulnerabilities, unmaintained and unsound advisories across the graph,
+# and yanked crates. Record a reason with any future ignore entry.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Licenses found in the resolved graph and compatible with MIT OR Apache-2.0
+# distribution. Add a license only after checking the crate that needs it.
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - "Type: Maintenance"
+    commit-message:
+      prefix: "Update"
+    # Group patch updates only: a 0.x minor update is a breaking Cargo change and gets its own pull
+    # request.
+    groups:
+      cargo-patch:
+        update-types:
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - "Type: Maintenance"
+    commit-message:
+      prefix: "Update"
+    groups:
+      actions:
+        patterns:
+          - "*"
