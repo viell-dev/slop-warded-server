@@ -1,0 +1,268 @@
+---
+description: "Build a JSON API: resources, errors, query parameters, authentication, versions, CORS and limits, starting from the api template."
+---
+
+# A JSON API
+
+Start from the `api` template:
+
+```sh
+cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.1 --name my-api
+cd my-api
+cargo run
+```
+
+Try it from another terminal:
+
+```sh
+curl --insecure --json '{"text": "milk"}' https://localhost:8443/notes
+curl --insecure https://localhost:8443/notes/1
+```
+
+## What you get
+
+- `src/main.rs`: starts the server. You seldom need to change it.
+- `src/routes.rs`: the routes and the middleware, with their tests in `src/routes/tests.rs`.
+- `src/notes.rs`: an example resource, in memory. Replace it with yours.
+- `src/problem.rs`: errors as JSON.
+
+The routes are in one place, with the method as a condition:
+
+<<< ../templates/api/src/routes.rs
+
+A resource module holds its types and handlers:
+
+<<< ../templates/api/src/notes.rs
+
+## Errors
+
+Every error is JSON with a status, such as `{"error":"there is no such note"}`. Handlers return a
+`Problem`, and `JsonBody` and `PathParams` are extractors that return one when the request is wrong:
+
+<<< ../templates/api/src/problem.rs
+
+Wrap other extractors that you use, such as Axum's `Query`, in the same way. Errors that the server
+or the middleware answer, such as a request head that is too large, are not JSON.
+
+Run the tests with `cargo test`. They call the application directly, without a network; see
+[testing](./testing.md).
+
+## Use a database
+
+`Notes` is the state: a value that is cheap to clone and shared between clones. A connection pool,
+such as SQLx's `PgPool`, is one too. Create it in `main`, pass it to `app` in place of
+`Notes::default()`, and give it to handlers with `.with_state(pool.clone())`. Handlers receive it as
+`State(pool): State<PgPool>`.
+
+## Query parameters
+
+Axum's `Query` extractor parses them. A route can also require one; see
+[Warded's guide](https://viell-dev.github.io/slop-warded-router/conditions.html).
+
+```rust
+use axum::{
+    Json,
+    body::Body,
+    extract::Query,
+    http::Request,
+    routing::any,
+};
+use http_body_util::BodyExt;
+use serde::Deserialize;
+use tower::ServiceExt;
+use warded_server::warded::{
+    Matcher, Router,
+    matchers::{exact_path, get},
+};
+
+#[derive(Deserialize)]
+struct Page {
+    #[serde(default)]
+    offset: usize,
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+
+fn default_limit() -> usize {
+    20
+}
+
+async fn list(Query(page): Query<Page>) -> Json<Vec<usize>> {
+    let limit = page.limit.min(100);
+    Json((0..1_000).skip(page.offset).take(limit).collect())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let routes = Router::new().route(get().and(exact_path("/numbers")), any(list));
+    let request = Request::builder()
+        .uri("/numbers?offset=5&limit=3")
+        .body(Body::empty())?;
+    let response = warded_server::app(routes).oneshot(request).await?;
+    assert_eq!(response.into_body().collect().await?.to_bytes(), "[5,6,7]");
+    Ok(())
+}
+```
+
+## Require authentication on some routes
+
+A layer on a destination runs only when that route is selected. This one checks a bearer token
+before the handler runs:
+
+```rust
+use axum::{
+    body::Body,
+    extract::Request,
+    http::{StatusCode, header::AUTHORIZATION},
+    middleware::{Next, from_fn_with_state},
+    response::Response,
+    routing::any,
+};
+use tower::ServiceExt;
+use warded_server::warded::{
+    Matcher, Router,
+    matchers::{exact_path, get},
+};
+
+/// The clients' tokens. Keep real ones outside the source, and compare them in constant time.
+#[derive(Clone)]
+struct Tokens(&'static [&'static str]);
+
+async fn require_token(
+    axum::extract::State(tokens): axum::extract::State<Tokens>,
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let token = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    match token {
+        Some(token) if tokens.0.contains(&token) => Ok(next.run(request).await),
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
+}
+
+fn app(tokens: Tokens) -> axum::Router {
+    let protected = || from_fn_with_state(tokens.clone(), require_token);
+    let routes = Router::new()
+        .route(
+            get().and(exact_path("/health")),
+            any(|| async { "healthy" }),
+        )
+        .route(
+            get().and(exact_path("/account")),
+            any(|| async { "your account" }).layer(protected()),
+        );
+    warded_server::app(routes)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = app(Tokens(&["secret"]));
+    for (path, authorization, expected) in [
+        ("/health", "", StatusCode::OK),
+        ("/account", "", StatusCode::UNAUTHORIZED),
+        ("/account", "Bearer wrong", StatusCode::UNAUTHORIZED),
+        ("/account", "Bearer secret", StatusCode::OK),
+    ] {
+        let request = Request::builder()
+            .uri(path)
+            .header(AUTHORIZATION, authorization)
+            .body(Body::empty())?;
+        let response = app.clone().oneshot(request).await?;
+        assert_eq!(response.status(), expected, "{path} {authorization}");
+    }
+    Ok(())
+}
+```
+
+The server does not read `Authorization` in routes on purpose: a condition that fails moves on to
+the next route, which is not how access should be refused.
+
+## Versions of the API
+
+Put the version in the path, or let clients name it in a header. A route per version keeps the
+handlers apart:
+
+```rust
+use axum::{body::Body, http::Request, routing::any};
+use http_body_util::BodyExt;
+use tower::ServiceExt;
+use warded_server::warded::{
+    Matcher, Router,
+    matchers::{exact_path, get, header_eq},
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let users = || get().and(exact_path("/users"));
+    let routes = Router::new()
+        .route(
+            users().and(header_eq("x-api-version", "2")?),
+            any(|| async { "version 2" }),
+        )
+        // Clients that name no version, or another one, get the oldest.
+        .route(users(), any(|| async { "version 1" }));
+    let app = warded_server::app(routes);
+
+    for (version, expected) in [("2", "version 2"), ("1", "version 1")] {
+        let request = Request::builder()
+            .uri("/users")
+            .header("x-api-version", version)
+            .body(Body::empty())?;
+        let response = app.clone().oneshot(request).await?;
+        assert_eq!(response.into_body().collect().await?.to_bytes(), expected);
+    }
+    Ok(())
+}
+```
+
+## Call it from a browser on another site
+
+Browsers ask for permission first (CORS). `tower-http` answers for the whole application, so add its
+layer to what `warded_server::app` returns, where it also sees the `OPTIONS` requests that no route
+handles:
+
+```rust
+use axum::{
+    body::Body,
+    http::{HeaderValue, Method, Request, header},
+    routing::any,
+};
+use tower::ServiceExt;
+use tower_http::cors::CorsLayer;
+use warded_server::warded::{
+    Matcher, Router,
+    matchers::{exact_path, get},
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let routes = Router::new().route(get().and(exact_path("/")), any(|| async { "data" }));
+    let cors = CorsLayer::new()
+        .allow_origin(HeaderValue::from_static("https://app.example.com"))
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::CONTENT_TYPE]);
+    let app = warded_server::app(routes).layer(cors);
+
+    let preflight = Request::builder()
+        .method(Method::OPTIONS)
+        .uri("/")
+        .header(header::ORIGIN, "https://app.example.com")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+        .body(Body::empty())?;
+    let response = app.oneshot(preflight).await?;
+    let allowed = &response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN];
+    assert_eq!(allowed, "https://app.example.com");
+    Ok(())
+}
+```
+
+## Before others use it
+
+- **Body size.** Axum's extractors refuse bodies over 2 MB. Change that with
+  `axum::extract::DefaultBodyLimit` as a layer on a destination.
+- **Time.** Add a timeout where handlers wait for something; see [middleware](./middleware.md).
+- **Deployment.** See [certificates](./certificates.md) and [deployment](./deployment.md).

@@ -1,7 +1,7 @@
 # Security policy
 
 Warded Server is in alpha and not suitable for the open internet. HTTP/3 has
-[known weaknesses](./docs/limits.md#http3) that need a new release of the library beneath it. Security
+[known weaknesses](https://viell-dev.github.io/slop-warded-server/limits.html#http-3) that need a new release of the library beneath it. Security
 fixes land on `main` and ship in a new prerelease.
 
 ## Reporting a vulnerability

@@ -28,9 +28,13 @@ agents; useful verification and honest compatibility claims are essential.
 
 ## Documentation
 
-- `README.md` and `docs/` are for users, rustdoc is the API reference, and `internals/` is for
-  maintainers. Put each fact in one of them.
+- `docs/` is a VitePress site of guides for users, rustdoc is the API reference, and `internals/` is
+  for maintainers. Put each fact in one of them. The README introduces the project and links there.
+- Write guides for a newcomer, by what they want to build or fix. Examples are complete programs;
+  `cargo test --package warded-server-docs` compiles them, and runs those not marked `no_run`. Include
+  the templates' files instead of copying them.
+- The site describes the latest release, and only `pages.yml` deploys it, from that release's tag.
 - The environment variables are listed in rustdoc, `docs/configuration.md` and each template's
-  README; change them together.
+  README; change them together. Error messages are quoted in `docs/troubleshooting.md`.
 - Keep known weaknesses in `docs/limits.md` current, and link the upstream reports.
 - Record user-facing changes in the changelog.

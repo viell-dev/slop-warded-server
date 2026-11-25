@@ -10,6 +10,8 @@ Use a branch and pull request against `main`. The required `ci` check runs on Li
   HTTP/1.1, HTTP/2 and HTTP/3 connections. Use Git Bash on Windows.
 - `bash scripts/check-templates.sh` generates a project from every template, with the library from
   your checkout, and checks it. It needs `cargo-generate`.
+- In `docs/`, with the Node.js version in `docs/.nvmrc`, `npm ci` and `npm run build` build the
+  documentation site, and `npm run dev` previews it. `check.sh` runs its Rust examples.
 - `cargo-deny --locked check` checks the dependencies.
 
 Record the platforms, Rust version, commands and evidence limits in the pull request, and review the

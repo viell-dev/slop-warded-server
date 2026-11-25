@@ -19,6 +19,11 @@
 //! }
 //! ```
 //!
+//! # Guides
+//!
+//! The [documentation site](https://viell-dev.github.io/slop-warded-server/) explains each task with
+//! complete examples, by kind of project.
+//!
 //! # What a request carries
 //!
 //! Every request has these extensions, whichever protocol carried it:
