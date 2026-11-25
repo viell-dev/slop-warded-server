@@ -30,8 +30,13 @@ async fn a_failed_bind_leaves_nothing_bound() {
     let result = common::server(&authority).redirect_http(address).bind();
     assert_eq!(listener_of(result), "HTTP over TCP");
 
-    let taken = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let address = taken.local_addr().unwrap();
+    // Windows can reserve a port for TCP that is free for UDP.
+    let (_taken, address) = std::iter::repeat_with(|| UdpSocket::bind("127.0.0.1:0").unwrap())
+        .take(2_000)
+        .map(|taken| (taken.local_addr().unwrap(), taken))
+        .find(|(address, _)| TcpListener::bind(address).is_ok())
+        .map(|(address, taken)| (taken, address))
+        .expect("there is a UDP port that is free for TCP");
     let result = common::server(&authority).https(address).bind();
     assert_eq!(listener_of(result), "HTTP/3 over UDP");
     TcpListener::bind(address).expect("the TCP listener was closed");

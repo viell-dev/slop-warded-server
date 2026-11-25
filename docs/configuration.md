@@ -92,7 +92,8 @@ client takes to send a body or to read a response, as long as its connection is 
 
 Ctrl+C or `SIGTERM` stops the server from accepting connections. Requests in progress have the grace
 period to finish, and then their connections are closed. Ask a second time to close them at once.
-Idle connections are closed early, which takes a few seconds when HTTP/3 clients are among them.
+Idle connections are closed early, which takes a few seconds when there are HTTP/3 clients, or
+others that do not answer.
 
 Make whatever manages the process wait longer than the grace period before it kills it.
 

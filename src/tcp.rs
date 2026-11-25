@@ -12,12 +12,14 @@ use std::{
     net::{SocketAddr, TcpListener},
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
     sync::{OwnedSemaphorePermit, Semaphore},
+    time::{Instant, Sleep, sleep},
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tower::service_fn;
@@ -86,6 +88,12 @@ pub(crate) async fn serve_http(
         .map_err(stopped(HTTP))
 }
 
+/// How long a client may be silent before its connection is closed, once everything is sent.
+const LINGER: Duration = Duration::from_secs(5);
+
+/// How long a client may take to close its side, however much it sends.
+const LONGEST_LINGER: Duration = Duration::from_secs(30);
+
 const HTTPS: &str = "HTTPS";
 const HTTP: &str = "HTTP";
 
@@ -149,6 +157,7 @@ impl<S> Accept<TcpStream, S> for Admit {
                     stream,
                     abort_read: Box::pin(abort.clone().cancelled_owned()),
                     abort_write: Box::pin(abort.cancelled_owned()),
+                    lingering: None,
                     _slot: slot,
                 };
                 (stream, service)
@@ -165,7 +174,14 @@ struct Admitted {
     stream: TcpStream,
     abort_read: Pin<Box<WaitForCancellationFutureOwned>>,
     abort_write: Pin<Box<WaitForCancellationFutureOwned>>,
+    lingering: Option<Lingering>,
     _slot: OwnedSemaphorePermit,
+}
+
+/// The end of a connection whose sending side is closed.
+struct Lingering {
+    silence: Pin<Box<Sleep>>,
+    deadline: Instant,
 }
 
 impl Admitted {
@@ -218,7 +234,32 @@ impl AsyncWrite for Admitted {
         Pin::new(&mut self.stream).poll_flush(cx)
     }
 
+    /// Close the sending side, and wait for the client to close its own.
+    ///
+    /// Closing a connection with data from the client unread, or that is still to come, makes the
+    /// operating system reset it, and the client can lose what it has not read of the response
+    /// (RFC 9112 section 9.6). HTTP/2 clients in particular send as they read.
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.stream).poll_shutdown(cx)
+        let this = &mut *self;
+        if this.lingering.is_none() {
+            ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
+        }
+        let now = Instant::now();
+        let lingering = this.lingering.get_or_insert_with(|| Lingering {
+            silence: Box::pin(sleep(LINGER)),
+            deadline: now + LONGEST_LINGER,
+        });
+        Self::poll_aborted(this.abort_write.as_mut(), cx)?;
+        loop {
+            let mut discarded = [0; 4096];
+            let mut buffer = ReadBuf::new(&mut discarded);
+            match Pin::new(&mut this.stream).poll_read(cx, &mut buffer) {
+                Poll::Ready(Ok(())) if !buffer.filled().is_empty() && now < lingering.deadline => {
+                    lingering.silence.as_mut().reset(now + LINGER);
+                }
+                Poll::Ready(_) => return Poll::Ready(Ok(())),
+                Poll::Pending => return lingering.silence.as_mut().poll(cx).map(Ok),
+            }
+        }
     }
 }

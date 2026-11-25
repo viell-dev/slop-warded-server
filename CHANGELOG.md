@@ -6,6 +6,10 @@ Versions follow [Semantic Versioning](https://semver.org). Any prerelease may br
 
 - The [deployment guide](https://viell-dev.github.io/slop-warded-server/deployment.html) shows how an
   application can trust a proxy that ends TLS.
+- A response over TCP is no longer cut off when the client sends something as the connection closes,
+  which HTTP/2 clients do at a shutdown
+  ([#10](https://github.com/viell-dev/slop-warded-server/issues/10)).
+- Port 0 finds a port that is free for TCP and UDP also where Windows reserves many of one of them.
 
 ## 0.1.0-alpha.1 - 2026-11-25
 
