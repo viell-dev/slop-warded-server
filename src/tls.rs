@@ -73,6 +73,7 @@ impl Tls {
     }
 
     /// Whether [`Tls::reload`] has files to read.
+    #[cfg(unix)]
     pub(crate) fn reloads(&self) -> bool {
         self.files.is_some()
     }
