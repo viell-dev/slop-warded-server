@@ -18,7 +18,7 @@ is not on crates.io. Depend on the exact tag, so that you choose when to move:
 
 ```toml
 [dependencies]
-warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.1" }
+warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.2" }
 ```
 
 The server brings the version of Warded that it was tested with: 0.1.0-beta.5.

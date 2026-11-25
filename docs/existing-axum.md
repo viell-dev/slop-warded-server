@@ -10,7 +10,7 @@ Add the dependency:
 
 ```toml
 [dependencies]
-warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.1" }
+warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.2" }
 ```
 
 Replace the listener and `axum::serve` with `Server`:

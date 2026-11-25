@@ -30,6 +30,8 @@ With the `hello` example running, and a certificate that Chromium can be told to
 
 - curl with `--http1.1`, `--http2` and `--http3-only`;
 - curl with `--alt-svc` and a file, twice: the second request uses HTTP/3;
+- an upload of 30 MB, which the example does not read, with curl over each protocol and with `fetch` in
+  Chromium: each gets its response, every time;
 - Chromium with the flags from [the HTTP/3 page](../docs/http3.md#in-browsers): the document's
   `performance.getEntriesByType("navigation")[0].nextHopProtocol` is `h3`.
 

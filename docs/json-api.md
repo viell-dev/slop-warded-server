@@ -7,7 +7,7 @@ description: "Build a JSON API: resources, errors, query parameters, authenticat
 Start from the `api` template:
 
 ```sh
-cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.1 --name my-api
+cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.2 --name my-api
 cd my-api
 cargo run
 ```
