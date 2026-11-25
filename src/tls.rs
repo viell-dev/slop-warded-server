@@ -3,7 +3,10 @@ use arc_swap::ArcSwap;
 use rustls::{
     ServerConfig,
     crypto::{CryptoProvider, aws_lc_rs},
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    pki_types::{
+        CertificateDer, PrivateKeyDer,
+        pem::{self, PemObject},
+    },
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
@@ -117,6 +120,10 @@ impl Files {
     fn load(&self) -> Result<CertifiedKey, Error> {
         let chain = CertificateDer::pem_file_iter(&self.chain)
             .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+            .and_then(|chain| match chain.is_empty() {
+                true => Err(pem::Error::NoItemsFound),
+                false => Ok(chain),
+            })
             .map_err(|source| Error::Read {
                 path: self.chain.clone(),
                 source,
@@ -133,9 +140,6 @@ fn certified(
     chain: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
 ) -> Result<CertifiedKey, Error> {
-    if chain.is_empty() {
-        return Err(Error::Certificate(rustls::Error::NoCertificatesPresented));
-    }
     CertifiedKey::from_der(chain, key, &provider()).map_err(Error::Certificate)
 }
 
