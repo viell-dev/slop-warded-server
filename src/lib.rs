@@ -52,6 +52,7 @@ mod error;
 #[cfg(feature = "http3")]
 mod http3;
 mod limits;
+mod linger;
 mod listener;
 mod redirect;
 #[cfg(feature = "warded")]

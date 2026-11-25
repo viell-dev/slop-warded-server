@@ -172,6 +172,7 @@ them too. Your application can, for connections that come from the proxy:
 use axum::{
     body::Body,
     extract::{ConnectInfo, Request},
+    http::StatusCode,
     middleware::map_request,
     routing::any,
 };
@@ -187,10 +188,10 @@ use warded_server::warded::{
 const PROXY: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
 /// Replace what is known about the proxy's connection by what the proxy says about its client's.
-async fn trust_proxy(mut request: Request) -> Request {
+async fn trust_proxy(mut request: Request) -> Result<Request, StatusCode> {
     let peer = request.extensions().get::<ConnectInfo<SocketAddr>>();
     if peer.is_none_or(|peer| peer.0.ip() != PROXY) {
-        return request;
+        return Ok(request);
     }
     // More than one value means that the proxy passes on what its client sent.
     let mut protocols = request.headers().get_all("x-forwarded-proto").iter();
@@ -200,18 +201,18 @@ async fn trust_proxy(mut request: Request) -> Request {
         _ => TransportSecurity::Unknown,
     };
     // The proxy adds its client at the end, after what that client may have sent.
-    let client = request
+    let client: IpAddr = request
         .headers()
         .get_all("x-forwarded-for")
         .iter()
         .next_back()
-        .and_then(|field| field.to_str().ok()?.rsplit(',').next()?.trim().parse().ok());
+        .and_then(|field| field.to_str().ok()?.rsplit(',').next()?.trim().parse().ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
     let extensions = request.extensions_mut();
     extensions.insert(security);
-    if let Some(client) = client {
-        extensions.insert(ConnectInfo(SocketAddr::new(client, 0)));
-    }
-    request
+    // The client's port is not known.
+    extensions.insert(ConnectInfo(SocketAddr::new(client.to_canonical(), 0)));
+    Ok(request)
 }
 
 async fn greet(ConnectInfo(client): ConnectInfo<SocketAddr>) -> String {
@@ -251,10 +252,16 @@ This trusts the proxy completely, so check what yours does, and that nothing els
 its address:
 
 - It must replace `X-Forwarded-Proto` in every request, also when the client sent one.
-- It must add the client's address at the end of `X-Forwarded-For`, or replace the field. Behind
-  several proxies, the last address is that of another proxy and not the visitor's.
-- When `X-Forwarded-Proto` is missing or repeated, routes with `secured()` or `unsecure()` fail with
-  a 500, so that a mistake in the proxy's settings is noticed.
+- It must add the client's address at the end of `X-Forwarded-For`, or replace the field, as an IP
+  address without a port. Behind several proxies, the last address is that of another proxy and not
+  the visitor's.
+
+Mistakes in the proxy's settings are noticed: a request without an address gets a 400, and when
+`X-Forwarded-Proto` is missing or repeated, routes with `secured()` or `unsecure()` fail with a 500.
+
+The layer changes only what handlers get as `ConnectInfo` and `TransportSecurity`, in place of what
+the server knew. The URI, the `Host` field and the HTTP version stay those of the proxy's request, and
+the fields themselves are still there for other middleware to read.
 
 Warded's guide has [more on transport
 security](https://viell-dev.github.io/slop-warded-router/transport-security.html#behind-a-reverse-proxy).

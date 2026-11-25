@@ -3,6 +3,7 @@
 use crate::{
     Error, Limits, Tls,
     context::{Connection, Security},
+    linger::{LINGER, Linger},
 };
 use axum_server::{Control, Handle, accept::Accept, tls_rustls::RustlsConfig};
 use std::{
@@ -13,7 +14,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, ready},
-    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -37,6 +37,7 @@ impl Shared {
         Admit {
             slots: self.slots.clone(),
             abort: self.abort.clone(),
+            linger: LINGER,
         }
     }
 }
@@ -88,12 +89,6 @@ pub(crate) async fn serve_http(
         .map_err(stopped(HTTP))
 }
 
-/// How long a client may be silent before its connection is closed, once everything is sent.
-const LINGER: Duration = Duration::from_secs(5);
-
-/// How long a client may take to close its side, however much it sends.
-const LONGEST_LINGER: Duration = Duration::from_secs(30);
-
 const HTTPS: &str = "HTTPS";
 const HTTP: &str = "HTTP";
 
@@ -141,6 +136,7 @@ fn connections(
 struct Admit {
     slots: Arc<Semaphore>,
     abort: CancellationToken,
+    linger: Linger,
 }
 
 impl<S> Accept<TcpStream, S> for Admit {
@@ -157,7 +153,8 @@ impl<S> Accept<TcpStream, S> for Admit {
                     stream,
                     abort_read: Box::pin(abort.clone().cancelled_owned()),
                     abort_write: Box::pin(abort.cancelled_owned()),
-                    lingering: None,
+                    linger: self.linger,
+                    closing: Closing::Open,
                     _slot: slot,
                 };
                 (stream, service)
@@ -174,14 +171,21 @@ struct Admitted {
     stream: TcpStream,
     abort_read: Pin<Box<WaitForCancellationFutureOwned>>,
     abort_write: Pin<Box<WaitForCancellationFutureOwned>>,
-    lingering: Option<Lingering>,
+    linger: Linger,
+    closing: Closing,
     _slot: OwnedSemaphorePermit,
 }
 
-/// The end of a connection whose sending side is closed.
-struct Lingering {
-    silence: Pin<Box<Sleep>>,
-    deadline: Instant,
+/// How far the server's side of a connection is closed.
+enum Closing {
+    Open,
+    /// It sends no more, and takes what the client sends until the timer ends, which is never after
+    /// the deadline.
+    Lingering {
+        timer: Pin<Box<Sleep>>,
+        deadline: Instant,
+    },
+    Closed,
 }
 
 impl Admitted {
@@ -241,25 +245,102 @@ impl AsyncWrite for Admitted {
     /// (RFC 9112 section 9.6). HTTP/2 clients in particular send as they read.
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = &mut *self;
-        if this.lingering.is_none() {
-            ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
-        }
-        let now = Instant::now();
-        let lingering = this.lingering.get_or_insert_with(|| Lingering {
-            silence: Box::pin(sleep(LINGER)),
-            deadline: now + LONGEST_LINGER,
-        });
-        Self::poll_aborted(this.abort_write.as_mut(), cx)?;
         loop {
-            let mut discarded = [0; 4096];
-            let mut buffer = ReadBuf::new(&mut discarded);
-            match Pin::new(&mut this.stream).poll_read(cx, &mut buffer) {
-                Poll::Ready(Ok(())) if !buffer.filled().is_empty() && now < lingering.deadline => {
-                    lingering.silence.as_mut().reset(now + LINGER);
+            match &mut this.closing {
+                Closing::Open => {
+                    ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
+                    this.closing = Closing::Lingering {
+                        timer: Box::pin(sleep(this.linger.silence.min(this.linger.longest))),
+                        deadline: Instant::now() + this.linger.longest,
+                    };
                 }
-                Poll::Ready(_) => return Poll::Ready(Ok(())),
-                Poll::Pending => return lingering.silence.as_mut().poll(cx).map(Ok),
+                Closing::Lingering { timer, deadline } => {
+                    Self::poll_aborted(this.abort_write.as_mut(), cx)?;
+                    let over = timer.as_mut().poll(cx).is_ready();
+                    let mut discarded = [0; 4096];
+                    let mut buffer = ReadBuf::new(&mut discarded);
+                    match Pin::new(&mut this.stream).poll_read(cx, &mut buffer) {
+                        Poll::Ready(Ok(())) if !over && !buffer.filled().is_empty() => {
+                            let silence = Instant::now() + this.linger.silence;
+                            timer.as_mut().reset(silence.min(*deadline));
+                        }
+                        Poll::Pending if !over => return Poll::Pending,
+                        // The client has closed, or the wait is over.
+                        _ => this.closing = Closing::Closed,
+                    }
+                }
+                Closing::Closed => return Poll::Ready(Ok(())),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        time::timeout,
+    };
+
+    const SHORT: Duration = Duration::from_millis(300);
+    const LONG: Duration = Duration::from_secs(10);
+
+    /// Both ends of a connection, with the server's admitted.
+    async fn connection(silence: Duration, longest: Duration) -> (Admitted, TcpStream) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap());
+        let (client, accepted) = tokio::join!(client, listener.accept());
+        let admit = Admit {
+            slots: Arc::new(Semaphore::new(1)),
+            abort: CancellationToken::new(),
+            linger: Linger { silence, longest },
+        };
+        let (server, ()) = admit.accept(accepted.unwrap().0, ()).await.unwrap();
+        (server, client.unwrap())
+    }
+
+    #[tokio::test]
+    async fn closing_waits_for_the_client() {
+        let (mut server, mut client) = connection(LONG, LONG).await;
+        let mut closing = Box::pin(server.shutdown());
+        assert!(timeout(SHORT, &mut closing).await.is_err());
+        assert_eq!(client.read(&mut [0; 1]).await.unwrap(), 0);
+        client.write_all(b"more").await.unwrap();
+        assert!(timeout(SHORT, &mut closing).await.is_err());
+        drop(client);
+        timeout(LONG / 2, closing).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn closing_waits_no_longer_than_a_silence() {
+        let (mut server, mut client) = connection(SHORT, LONG).await;
+        timeout(LONG / 2, server.shutdown()).await.unwrap().unwrap();
+        // It does not begin again.
+        client.write_all(b"more").await.unwrap();
+        let mut again = Box::pin(server.shutdown());
+        let at_once = std::future::poll_fn(|cx| Poll::Ready(again.as_mut().poll(cx))).await;
+        assert!(at_once.is_ready());
+    }
+
+    #[tokio::test]
+    async fn closing_waits_no_longer_than_the_deadline() {
+        // For a client that sends something and is then silent.
+        let (mut server, mut client) = connection(LONG, 3 * SHORT).await;
+        let mut closing = Box::pin(server.shutdown());
+        assert!(timeout(SHORT, &mut closing).await.is_err());
+        client.write_all(b"more").await.unwrap();
+        timeout(LONG / 2, closing).await.unwrap().unwrap();
+
+        // For one that is never silent.
+        let (mut server, mut client) = connection(SHORT, 3 * SHORT).await;
+        let sending = tokio::spawn(async move {
+            while client.write_all(b"more").await.is_ok() {
+                tokio::time::sleep(SHORT / 10).await;
+            }
+        });
+        timeout(LONG / 2, server.shutdown()).await.unwrap().unwrap();
+        sending.abort();
     }
 }

@@ -48,7 +48,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 What the server adds to requests is missing here. Insert `TransportSecurity` for routes with
 `secured()` or `unsecure()`, which otherwise fail with a 500, and `ConnectInfo(address)` for
-handlers that take the client's address.
+handlers that take the client's address. What it does to responses is missing too: the content of a
+response to HEAD can be there, and `Alt-Svc` and `Date` are not.
 
 ## Over real connections
 

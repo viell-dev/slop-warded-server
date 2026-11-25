@@ -286,13 +286,17 @@ async fn a_client_that_still_sends_gets_the_whole_response() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     stream.write_all(&[b'x'; 100_000]).await.unwrap();
     let mut response = Vec::new();
-    while response.len() < LENGTH {
+    loop {
         tokio::time::sleep(Duration::from_millis(5)).await;
         let mut piece = [0; 10_000];
-        let length = common::soon(stream.read(&mut piece)).await.unwrap();
-        assert_ne!(length, 0, "after {}", response.len());
-        response.extend_from_slice(&piece[..length]);
+        match common::soon(stream.read(&mut piece)).await.unwrap() {
+            0 => break,
+            length => response.extend_from_slice(&piece[..length]),
+        }
     }
+    let end_of_head = response.windows(4).position(|end| end == b"\r\n\r\n");
+    let content = &response[end_of_head.unwrap() + 4..];
+    assert!(content == [b'x'; LENGTH], "{}", content.len());
     drop(stream);
     common::soon(async {
         let mut client = Client::connect(Version::HTTP_11, running.https, &authority)
