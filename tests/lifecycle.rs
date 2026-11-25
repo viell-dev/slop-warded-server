@@ -49,11 +49,8 @@ async fn an_unusable_certificate_is_reported() {
     let error = Tls::pem_files(authority.chain(), &missing).unwrap_err();
     assert!(error.to_string().contains("missing.pem"), "{error}");
     // A file without a certificate.
-    let result = Tls::pem_files(authority.key(), authority.key());
-    assert!(matches!(
-        result,
-        Err(Error::Certificate(_) | Error::Read { .. })
-    ));
+    let error = Tls::pem_files(authority.key(), authority.key()).unwrap_err();
+    assert!(error.to_string().contains("key.pem"), "{error}");
     // A key that belongs to another certificate.
     let other = Authority::new();
     let result = Tls::pem_files(authority.chain(), other.key());
