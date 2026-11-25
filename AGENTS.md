@@ -1,8 +1,8 @@
 # Agent instructions
 
-Read [README.md](./README.md) and [CONTRIBUTING.md](./CONTRIBUTING.md) before changing behavior. This
-repository is maintained by agents; useful verification and honest compatibility claims are
-essential.
+Read [README.md](./README.md), [CONTRIBUTING.md](./CONTRIBUTING.md), [limits](./docs/limits.md) and the
+[design notes](./internals/design.md) before changing behavior. This repository is maintained by
+agents; useful verification and honest compatibility claims are essential.
 
 ## Scope
 
@@ -24,3 +24,13 @@ essential.
 - Keep human-facing Markdown prose near 100 columns.
 - Use `.github/labels.json` as the label catalog. Every issue and pull request needs one `Type:`
   label and at most one `Status:` label. `Needs:` identifies the person who must act.
+- A test of a defence should fail when the defence is removed. Check that once, when adding it.
+
+## Documentation
+
+- `README.md` and `docs/` are for users, rustdoc is the API reference, and `internals/` is for
+  maintainers. Put each fact in one of them.
+- The environment variables are listed in rustdoc, `docs/configuration.md` and each template's
+  README; change them together.
+- Keep known weaknesses in `docs/limits.md` current, and link the upstream reports.
+- Record user-facing changes in the changelog.
