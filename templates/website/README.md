@@ -10,7 +10,8 @@ curl --insecure https://localhost:8443/
 
 ## Layout
 
-- `src/main.rs`: the routes, the middleware and the server.
+- `src/main.rs`: starts the server.
+- `src/routes.rs`: the routes and the middleware, with their tests below.
 - `src/pages.rs`: the pages, from the [Askama](https://askama.rs) templates in `templates/`.
 - `static/`: files served below `/static/`. Start the server where this directory is.
 
