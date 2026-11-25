@@ -268,6 +268,78 @@ async fn a_failed_response_body_is_not_a_complete_one() {
 }
 
 #[tokio::test]
+async fn a_client_that_still_sends_gets_the_whole_response() {
+    const LENGTH: usize = 1_000_000;
+
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(|| async { vec![b'x'; LENGTH] });
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, app);
+    let mut stream = tokio::net::TcpStream::connect(running.http.unwrap())
+        .await
+        .unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    // The system takes what it can of the response, and the server does not read this.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    stream.write_all(&[b'x'; 100_000]).await.unwrap();
+    let mut response = Vec::new();
+    while response.len() < LENGTH {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let mut piece = [0; 10_000];
+        let length = common::soon(stream.read(&mut piece)).await.unwrap();
+        assert_ne!(length, 0, "after {}", response.len());
+        response.extend_from_slice(&piece[..length]);
+    }
+    drop(stream);
+    common::soon(async {
+        let mut client = Client::connect(Version::HTTP_11, running.https, &authority)
+            .await
+            .unwrap();
+        client.get("/").await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_client_that_does_not_close_is_disconnected() {
+    let authority = Authority::new();
+    let mut limits = Limits::default();
+    limits.connections = 1;
+    let server = common::server(&authority)
+        .limits(limits)
+        .serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, echo());
+    let connect = || tokio::net::TcpStream::connect(running.http.unwrap());
+    let mut stream = connect().await.unwrap();
+    let request = b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    stream.write_all(request).await.unwrap();
+    let mut response = Vec::new();
+    common::soon(stream.read_to_end(&mut response))
+        .await
+        .unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    // Its slot comes back although it keeps its side open.
+    common::soon(async {
+        loop {
+            let mut next = connect().await.unwrap();
+            let mut response = Vec::new();
+            let answered = next.write_all(request).await.is_ok()
+                && next.read_to_end(&mut response).await.is_ok()
+                && response.starts_with(b"HTTP/1.1 200");
+            if answered {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    drop(stream);
+}
+
+#[tokio::test]
 async fn a_response_that_does_not_match_its_length_is_not_a_complete_one() {
     let authority = Authority::new();
     let app = axum::Router::new()

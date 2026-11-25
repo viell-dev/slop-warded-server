@@ -176,8 +176,9 @@ impl Server {
 
     #[cfg(feature = "http3")]
     fn bind_https(&self) -> Result<(TcpListener, Option<std::net::UdpSocket>), Error> {
-        /// A free TCP port may be taken for UDP, so look for one that is free for both.
-        const ATTEMPTS: usize = 16;
+        /// A free TCP port may be taken for UDP, so look for one that is free for both. Windows
+        /// hands them out in order, and can reserve hundreds in a row for one of the two.
+        const ATTEMPTS: usize = 2_000;
 
         let mut attempt = 1;
         loop {

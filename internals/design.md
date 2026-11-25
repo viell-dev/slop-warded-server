@@ -64,6 +64,8 @@ cleaning response heads.
 - **Closing HTTP/3 lingers while data flows.** Closing a QUIC connection discards what Quinn still has
   to send or repeat, and h3 does not report when a response has been received. A fixed delay loses
   responses on slow links.
+- **Closing TCP waits for the client.** Closing a socket while the client still sends resets the
+  connection, and the client can lose what it has not read. Neither Hyper nor `axum-server` waits.
 - **Connection slots are held by the stream**, not the service, so that upgraded connections count.
 - **Response streams reset unless finished.** Quinn finishes a stream that is dropped.
 - **No `Forwarded` or `X-Forwarded-*` field is read.** A client can send them. Trusting a proxy

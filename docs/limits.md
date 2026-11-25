@@ -73,7 +73,9 @@ connection stays open as long as its client answers pings, so idle clients use u
 limit. When it is reached, new TCP connections are closed without a response, and new QUIC
 connections are refused.
 
-At the end of an HTTP/3 connection the server waits until it has sent nothing for two seconds, or
+At the end of a TCP connection the server waits until the client closes it too, because the client
+could otherwise lose the end of a response. It stops waiting when the client has been silent for
+five seconds, or after 30 seconds. At the end of an HTTP/3 connection the server waits until it has sent nothing for two seconds, or
 the client closes it, so that the last response is not lost.
 
 ## Tested environments
