@@ -249,6 +249,84 @@ async fn a_service_without_a_router_gets_the_same_heads() {
 }
 
 #[tokio::test]
+async fn head_does_not_invent_a_length_for_a_stream() {
+    let authority = Authority::new();
+    let app = axum::Router::new().route(
+        "/",
+        axum_get(|| async {
+            let (mut sender, body) = channel();
+            tokio::spawn(async move { sender.send_data("abc".into()).await });
+            body
+        }),
+    );
+    let running = Running::start(common::server(&authority), app);
+    for version in VERSIONS {
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        let response = client
+            .send(request("HEAD", "/", Body::empty()))
+            .await
+            .unwrap();
+        let length = response.headers().get(header::CONTENT_LENGTH);
+        assert_eq!(length, None, "{version:?}");
+    }
+}
+
+#[tokio::test]
+async fn connect_works_over_http1_and_is_refused_over_http3() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let authority = Authority::new();
+    let app = tower::service_fn(|mut request: Request| async move {
+        tokio::spawn(async move {
+            let upgraded = hyper::upgrade::on(&mut request).await.unwrap();
+            let mut tunnel = hyper_util::rt::TokioIo::new(upgraded);
+            tunnel.write_all(b"tunnel").await.unwrap();
+        });
+        Ok::<_, std::convert::Infallible>(Response::new(Body::empty()))
+    });
+    let bound = common::server(&authority).bind().unwrap();
+    let address = bound.https_addr();
+    let serving = tokio::spawn(bound.serve_until(app, std::future::pending()));
+
+    let mut stream = common::tls(address, &authority, b"http/1.1").await.unwrap();
+    stream
+        .write_all(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+        .await
+        .unwrap();
+    let mut answer = Vec::new();
+    common::soon(async {
+        while !answer.ends_with(b"tunnel") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).await.unwrap();
+            answer.extend_from_slice(&byte);
+        }
+    })
+    .await;
+    let answer = String::from_utf8(answer).unwrap();
+    assert!(answer.starts_with("HTTP/1.1 200 "), "{answer}");
+    assert!(!answer.contains("content-length"), "{answer}");
+
+    // :method CONNECT and an :authority.
+    let (_endpoint, quic) = common::quic(address, &authority).await.unwrap();
+    let (mut send, mut receive) = quic.open_bi().await.unwrap();
+    let block = [0, 0, 0xcf, 0x50, 1, b'a'];
+    send.write_all(&common::frame(1, block.len() as u64, &block))
+        .await
+        .unwrap();
+    send.finish().unwrap();
+    if let Ok(answer) = common::soon(receive.read_to_end(1024)).await {
+        // Not :status 200 from the static table.
+        assert!(
+            !answer[..answer.len().min(8)].contains(&0xd9),
+            "{answer:02x?}"
+        );
+    }
+    serving.abort();
+}
+
+#[tokio::test]
 async fn statuses_without_content_have_no_body() {
     let authority = Authority::new();
     let app = axum::Router::new()
@@ -257,18 +335,26 @@ async fn statuses_without_content_have_no_body() {
             axum_get(|| async { (StatusCode::NO_CONTENT, "unexpected") }),
         )
         .route(
+            "/205",
+            axum_get(|| async { (StatusCode::RESET_CONTENT, "unexpected") }),
+        )
+        .route(
             "/304",
             axum_get(|| async { (StatusCode::NOT_MODIFIED, "unexpected") }),
         );
     let running = Running::start(common::server(&authority), app);
     for version in VERSIONS {
-        for path in ["/204", "/304"] {
+        for path in ["/204", "/205", "/304"] {
             let mut client = Client::connect(version, running.https, &authority)
                 .await
                 .unwrap();
             let response = client.get(path).await.unwrap();
             let length = response.headers().get(header::CONTENT_LENGTH);
-            assert_eq!(length, None, "{version:?} {path}");
+            if path == "/205" {
+                assert!(length.is_none_or(|length| length == "0"), "{version:?}");
+            } else {
+                assert_eq!(length, None, "{version:?} {path}");
+            }
             assert_eq!(text(response).await.unwrap(), "", "{version:?} {path}");
         }
     }

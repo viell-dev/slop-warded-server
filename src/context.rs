@@ -72,19 +72,19 @@ where
         if matches!(request.version(), Version::HTTP_2 | Version::HTTP_3) {
             join_cookies(request.headers_mut());
         }
-        let finish: Finish = if request.method() == Method::HEAD {
-            finish_head
-        } else {
-            finish
+        let finish: Finish = match *request.method() {
+            Method::HEAD => finish_head,
+            Method::CONNECT => finish_connect,
+            _ => finish,
         };
         MapResponse::new(self.app.clone(), finish).call(request)
     }
 }
 
 /// Give a response the length of its content, and no content that its status rules out (RFC 9110
-/// sections 15.3.5 and 15.4.5).
+/// sections 15.3.5, 15.3.6 and 15.4.5).
 ///
-/// Of the protocol implementations, only Hyper's HTTP/1.1 does all of this.
+/// Of the protocol implementations, only Hyper's HTTP/1.1 does most of this.
 fn finish(mut response: Response) -> Response {
     match response.status() {
         StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED => {
@@ -92,28 +92,49 @@ fn finish(mut response: Response) -> Response {
             // Axum's is about the body that it saw, and would be 0 for an empty one.
             response.headers_mut().remove(CONTENT_LENGTH);
         }
+        StatusCode::RESET_CONTENT => {
+            *response.body_mut() = Body::empty();
+            response.headers_mut().insert(CONTENT_LENGTH, 0.into());
+        }
         status if status.is_informational() => {}
         _ => {
-            let exact = response.body().size_hint().exact();
-            let headers = response.headers_mut();
-            if let Some(length) = exact
-                && !headers.contains_key(CONTENT_LENGTH)
-                && !headers.contains_key(TRANSFER_ENCODING)
-            {
-                headers.insert(CONTENT_LENGTH, length.into());
+            if let Some(length) = response.body().size_hint().exact() {
+                declare_length(response.headers_mut(), length);
             }
         }
     }
     response
 }
 
-/// Also take the content off the response to a HEAD request.
+/// Take the content off the response to a HEAD request, and keep what is known of its length.
 ///
 /// Axum does for its handlers, but the application can be any service.
-fn finish_head(response: Response) -> Response {
-    let mut response = finish(response);
+fn finish_head(mut response: Response) -> Response {
+    match response.body().size_hint().exact() {
+        // Taken off already, so this says nothing about the content.
+        None | Some(0) => {}
+        Some(length) => declare_length(response.headers_mut(), length),
+    }
     *response.body_mut() = Body::empty();
+    if let StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED = response.status() {
+        response.headers_mut().remove(CONTENT_LENGTH);
+    }
     response
+}
+
+/// A successful response to CONNECT begins a tunnel, and has neither content nor a length.
+fn finish_connect(response: Response) -> Response {
+    if response.status().is_success() {
+        response
+    } else {
+        finish(response)
+    }
+}
+
+fn declare_length(headers: &mut HeaderMap, length: u64) {
+    if !headers.contains_key(CONTENT_LENGTH) && !headers.contains_key(TRANSFER_ENCODING) {
+        headers.insert(CONTENT_LENGTH, length.into());
+    }
 }
 
 /// An IPv4 client of a dual-stack listener has an IPv4 address, not an IPv4-mapped IPv6 one.
