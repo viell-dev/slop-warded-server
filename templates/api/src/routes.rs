@@ -34,7 +34,7 @@ pub fn app(notes: Notes) -> Result<Router, DefinitionError> {
             any(notes::remove).with_state(notes),
         )
         .fallback(any(|| async {
-            Problem(StatusCode::NOT_FOUND, "nothing is here")
+            Problem::new(StatusCode::NOT_FOUND, "nothing is here")
         }));
 
     let middleware = ServiceBuilder::new()

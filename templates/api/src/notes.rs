@@ -1,13 +1,12 @@
 //! An example resource, kept in memory until the process ends. Replace it with yours.
 
-use crate::problem::Problem;
+use crate::problem::{JsonBody, PathParams, Problem};
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
-use warded_server::Params;
 
 /// Every note by its number. Clones share the same notes.
 #[derive(Clone, Default)]
@@ -43,7 +42,9 @@ pub struct NoteParams {
     id: u64,
 }
 
-const NO_SUCH_NOTE: Problem = Problem(StatusCode::NOT_FOUND, "there is no such note");
+fn no_such_note() -> Problem {
+    Problem::new(StatusCode::NOT_FOUND, "there is no such note")
+}
 
 pub async fn list(State(notes): State<Notes>) -> Json<Vec<Note>> {
     Json(notes.lock().notes.values().cloned().collect())
@@ -51,7 +52,7 @@ pub async fn list(State(notes): State<Notes>) -> Json<Vec<Note>> {
 
 pub async fn create(
     State(notes): State<Notes>,
-    Json(new): Json<NewNote>,
+    JsonBody(new): JsonBody<NewNote>,
 ) -> (StatusCode, Json<Note>) {
     let mut stored = notes.lock();
     stored.last_id += 1;
@@ -65,17 +66,19 @@ pub async fn create(
 
 pub async fn show(
     State(notes): State<Notes>,
-    Params(params): Params<NoteParams>,
+    PathParams(params): PathParams<NoteParams>,
 ) -> Result<Json<Note>, Problem> {
     let stored = notes.lock();
     let note = stored.notes.get(&params.id).cloned();
-    note.map(Json).ok_or(NO_SUCH_NOTE)
+    note.map(Json).ok_or_else(no_such_note)
 }
 
 pub async fn remove(
     State(notes): State<Notes>,
-    Params(params): Params<NoteParams>,
+    PathParams(params): PathParams<NoteParams>,
 ) -> Result<StatusCode, Problem> {
     let removed = notes.lock().notes.remove(&params.id);
-    removed.map(|_| StatusCode::NO_CONTENT).ok_or(NO_SUCH_NOTE)
+    removed
+        .map(|_| StatusCode::NO_CONTENT)
+        .ok_or_else(no_such_note)
 }

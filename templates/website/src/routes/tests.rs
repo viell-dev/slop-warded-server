@@ -48,6 +48,7 @@ async fn static_files_are_served() {
     ] {
         let response = get(missing, "en").await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{missing}");
+        assert_eq!(response.headers()[CONTENT_TYPE], "text/html; charset=utf-8");
     }
 }
 

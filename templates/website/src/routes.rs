@@ -26,7 +26,10 @@ pub fn app() -> Result<Router, DefinitionError> {
         .route(
             get_or_head().and(path("/static/{*file}")?),
             // An Axum router as a destination, here to take the prefix off the path.
-            Router::new().nest_service("/static", ServeDir::new(STATIC_FILES)),
+            Router::new().nest_service(
+                "/static",
+                ServeDir::new(STATIC_FILES).fallback(any(pages::not_found)),
+            ),
         )
         // One page in two languages. Swedish is served when the visitor prefers it, and English
         // otherwise.
