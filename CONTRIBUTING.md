@@ -4,8 +4,17 @@ Warded Server is an early Rust project maintained by agents. Small, well-scoped 
 fixes are welcome. Establish scope before proposing a new framework integration, protocol or
 unrelated feature. Describe behavior with synthetic requests and expected outcomes.
 
-Use a branch and pull request against `main`. Record the platforms, Rust version, commands and
-evidence limits in the pull request, and review the complete change after its checks pass.
+Use a branch and pull request against `main`. The required `ci` check runs on Linux and Windows:
+
+- `bash scripts/check.sh` checks the library in each combination of features, with tests over real
+  HTTP/1.1, HTTP/2 and HTTP/3 connections. Use Git Bash on Windows.
+- `bash scripts/check-templates.sh` generates a project from every template, with the library from
+  your checkout, and checks it. It needs `cargo-generate`.
+- `cargo-deny --locked check` checks the dependencies.
+
+Record the platforms, Rust version, commands and evidence limits in the pull request, and review the
+complete change after its checks pass. The [design notes](./internals/design.md) give the reasons
+behind the current structure, and [releases](./internals/release.md) the release procedure.
 
 Report suspected vulnerabilities using the [private GitHub route](./SECURITY.md).
 
