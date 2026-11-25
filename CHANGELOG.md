@@ -8,7 +8,9 @@ Versions follow [Semantic Versioning](https://semver.org). Any prerelease may br
   application can trust a proxy that ends TLS.
 - A response over TCP is no longer cut off when the client sends something as the connection closes,
   which HTTP/2 clients do at a shutdown
-  ([#10](https://github.com/viell-dev/slop-warded-server/issues/10)).
+  ([#10](https://github.com/viell-dev/slop-warded-server/issues/10)). The server waits for the client
+  to close, so a connection can keep its place among `Limits::connections` for up to 30 seconds more,
+  and a shutdown can take five seconds longer.
 - Port 0 finds a port that is free for TCP and UDP also where Windows reserves many of one of them.
 - **Templates:** pages of the `website` template answer HEAD with the head of the compressed response
   that GET gets ([#7](https://github.com/viell-dev/slop-warded-server/issues/7)). In a project made

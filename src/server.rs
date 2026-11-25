@@ -278,8 +278,7 @@ impl BoundServer {
             grace_period,
             ..
         } = self.server;
-        // Axum's router gives every transport the same HEAD and Content-Length handling,
-        // whatever kind of service the application is.
+        // Whatever kind of service the application is, the listeners get an Axum router.
         let app = axum::Router::new().fallback_service(app);
         let public_port = self.server.public_port.unwrap_or(self.https_addr.port());
         #[cfg(feature = "http3")]

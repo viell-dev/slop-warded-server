@@ -58,9 +58,9 @@ cleaning response heads.
 
 ## Choices that are easy to undo by accident
 
-- **The application is wrapped in an Axum router** before anything else, because that router supplies
-  HEAD and `Content-Length` handling, which Hyper does for HTTP/1.1 and HTTP/2 only in part and h3
-  not at all.
+- **Responses are finished for each connection**, in `src/context.rs`, outside all layers: the content
+  for HEAD, and `Content-Length`. Axum does it for its own handlers only, Hyper for HTTP/1.1 and
+  HTTP/2 only in part, and h3 not at all.
 - **Closing HTTP/3 lingers while data flows.** Closing a QUIC connection discards what Quinn still has
   to send or repeat, and h3 does not report when a response has been received. A fixed delay loses
   responses on slow links.
