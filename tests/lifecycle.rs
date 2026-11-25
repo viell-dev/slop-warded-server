@@ -2,7 +2,11 @@
 
 mod common;
 
-use axum::{http::Version, response::Response, routing::get as axum_get};
+use axum::{
+    http::Version,
+    response::Response,
+    routing::{get as axum_get, post as axum_post},
+};
 use common::{Authority, Client, Running, VERSIONS, channel, chunk, get, text};
 use std::{
     net::{TcpListener, UdpSocket},
@@ -173,6 +177,50 @@ async fn requests_in_progress_finish_during_shutdown() {
         assert!(rest.ends_with(",last"));
         running.ended().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_read_can_be_finished_during_shutdown() {
+    let authority = Authority::new();
+    // One body is dropped before the response, and the other after it, during the shutdown.
+    let app = fine().route(
+        "/later",
+        axum_post(|request: axum::extract::Request| async {
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                drop(request);
+            });
+        }),
+    );
+    let mut running = Running::start(common::server(&authority), app);
+    let client = common::http3(running.https, &authority).await.unwrap();
+    let mut streams = Vec::new();
+    for path in ["/", "/later"] {
+        let (mut send, mut receive) = client.quic.open_bi().await.unwrap();
+        send.write_all(&common::headers_frame("POST", path, &[]))
+            .await
+            .unwrap();
+        let response = common::soon(receive.read_to_end(1024)).await.unwrap();
+        assert!(!response.is_empty());
+        streams.push(send);
+    }
+
+    running.stop();
+    // Longer than the server waits when it has nothing to send.
+    let data = common::frame(common::DATA, 1_000, &[0; 1_000]);
+    for _ in 0..3 {
+        streams[0].write_all(&data).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    streams[0].finish().unwrap();
+    assert_eq!(common::soon(streams[0].stopped()).await.unwrap(), None);
+    for _ in 0..8 {
+        streams[1].write_all(&data).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    streams[1].finish().unwrap();
+    assert_eq!(common::soon(streams[1].stopped()).await.unwrap(), None);
+    running.ended().await.unwrap();
 }
 
 /// Small enough for Quinn to take at once, and large enough to spend seconds on the slow link.

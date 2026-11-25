@@ -85,6 +85,11 @@ would not change the second point. It also avoids a panic of `h3-quinn` when a s
   connection, and the client can lose what it has not read. Neither Hyper nor `axum-server` waits.
 - **Connection slots are held by the stream**, not the service, so that upgraded connections count.
 - **Response streams reset unless finished.** Quinn finishes a stream that is dropped.
+- **Unread HTTP/3 bodies are discarded for a while.** The client could be told to stop at once, but
+  Chromium then never reports the response, and curl reports an error instead of it. What the stream
+  brings is discarded, and not what h3 makes of it, which knows neither when the client last sent
+  something nor, with trailers, when it is done. It is taken in order, because Quinn otherwise
+  remembers every range that it has received.
 - **What is kept of a request is copied.** The pieces that Quinn hands out keep the packets in
   memory that they came in, so a limit on the length of what is kept is not one on its memory.
 - **Packets are received apart on Linux.** With receive offload, Quinn keeps whole batches of packets

@@ -24,7 +24,8 @@ type SendStream = RequestStream<Sender, Bytes>;
 /// How much of a body to gather before the application gets it.
 const PIECE: usize = 16 * 1024;
 
-/// A request body that reads its stream only as the application asks for more.
+/// A request body that reads its stream only as the application asks for more. The transport takes
+/// care of what is left when it is dropped.
 pub(super) struct RequestBody {
     stream: ReceiveStream,
     next: Next,
@@ -108,6 +109,7 @@ impl HttpBody for RequestBody {
         let frame = ready!(self.poll(cx));
         if matches!(frame, Some(Err(_))) {
             self.next = Next::End;
+            self.stream.stop_sending(Code::H3_MESSAGE_ERROR);
         }
         Poll::Ready(frame)
     }
@@ -119,13 +121,6 @@ impl HttpBody for RequestBody {
     fn size_hint(&self) -> SizeHint {
         self.remaining
             .map_or_else(SizeHint::new, SizeHint::with_exact)
-    }
-}
-
-impl Drop for RequestBody {
-    /// Tell the client not to send what the application did not read.
-    fn drop(&mut self) {
-        self.stream.stop_sending(Code::H3_NO_ERROR);
     }
 }
 

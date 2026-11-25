@@ -252,6 +252,65 @@ async fn a_truncated_http3_body_leaves_its_connection_usable() {
 }
 
 #[tokio::test]
+async fn an_http3_client_can_finish_a_body_that_is_not_read() {
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(|| async { "unread" });
+    let running = Running::start(common::server(&authority), app);
+    let client = common::http3(running.https, &authority).await.unwrap();
+    let (mut send, mut receive) = client.quic.open_bi().await.unwrap();
+    send.write_all(&headers_frame("POST", "/", &[]))
+        .await
+        .unwrap();
+    let head = common::soon(receive.read_chunk(1024, true)).await.unwrap();
+    assert!(has_status(&head.unwrap().bytes, StatusCode::OK));
+    // More than all windows together.
+    let body = frame(DATA, 12_000_000, &vec![0; 12_000_000]);
+    common::soon(send.write_all(&body)).await.unwrap();
+    send.finish().unwrap();
+    // It was not told to stop.
+    assert_eq!(common::soon(send.stopped()).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn an_http3_client_can_finish_after_trailers_that_are_not_read() {
+    let authority = Authority::new();
+    let app = axum::Router::new()
+        .route("/unread", post(|| async {}))
+        .route(
+            "/data",
+            post(|request: axum::extract::Request| async {
+                let mut body = request.into_body();
+                assert_eq!(chunk(&mut body).await.unwrap(), "hello");
+            }),
+        );
+    let running = Running::start(common::server(&authority), app);
+    let client = common::http3(running.https, &authority).await.unwrap();
+    for path in ["/unread", "/data"] {
+        let (mut send, mut receive) = client.quic.open_bi().await.unwrap();
+        // x: y, with a literal name and value.
+        let trailers = frame(1, 6, &[0, 0, 0x21, b'x', 1, b'y']);
+        let request = [
+            headers_frame("POST", path, &[]),
+            frame(DATA, 5, b"hello"),
+            trailers,
+        ];
+        // The trailers are incomplete for longer than the client may be silent.
+        let request = request.concat();
+        let (last, request) = request.split_last().unwrap();
+        send.write_all(&request[..request.len() - 3]).await.unwrap();
+        let response = common::soon(receive.read_to_end(1024)).await.unwrap();
+        assert!(has_status(&response, StatusCode::OK), "{response:02x?}");
+        for byte in &request[request.len() - 3..] {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            send.write_all(&[*byte]).await.unwrap();
+        }
+        send.write_all(&[*last]).await.unwrap();
+        send.finish().unwrap();
+        assert_eq!(common::soon(send.stopped()).await.unwrap(), None, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn dropping_a_partly_read_http3_body_does_not_fail_the_request() {
     let authority = Authority::new();
     let app = axum::Router::new().fallback(|request: axum::extract::Request| async {
@@ -272,7 +331,7 @@ async fn dropping_a_partly_read_http3_body_does_not_fail_the_request() {
     send.write_all(&request.concat()).await.unwrap();
     let response = common::soon(receive.read_to_end(1024)).await.unwrap();
     assert!(has_status(&response, StatusCode::OK), "{response:02x?}");
-    // The client has not finished, and is told that it need not.
+    // The client does not finish, and is told after a while that it need not.
     let code = common::soon(send.stopped()).await.unwrap();
     assert_eq!(code, Some(NO_ERROR));
 }
