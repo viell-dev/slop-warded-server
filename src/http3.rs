@@ -10,7 +10,7 @@ use crate::{
 use body::{RequestBody, Responder};
 use bytes::Bytes;
 use h3::{error::Code, server::RequestResolver};
-use http::Request;
+use http::{Method, Request};
 use quinn::{VarInt, crypto::rustls::QuicServerConfig};
 use std::{io, net::UdpSocket, sync::Arc, time::Duration};
 use tokio::{
@@ -170,33 +170,41 @@ impl QuicConnection {
         let mut requests = JoinSet::new();
         let mut draining = false;
         loop {
-            tokio::select! {
-                () = self.stop.cancelled(), if !draining => {
+            let accepted = {
+                // Kept while requests end, because h3 can be in the middle of writing a GOAWAY.
+                let mut accept = std::pin::pin!(connection.accept());
+                loop {
+                    tokio::select! {
+                        accepted = &mut accept => break Some(accepted?),
+                        () = self.stop.cancelled(), if !draining => break None,
+                        // A panicking handler ends its own request only.
+                        Some(_) = requests.join_next() => {}
+                        () = linger(&quic), if draining && requests.is_empty() => return Ok(()),
+                    }
+                }
+            };
+            match accepted {
+                None => {
                     draining = true;
                     // The GOAWAY that this sends tells the client that requests from its number
                     // on are not processed. With 0, h3 names the last request that it accepted.
                     connection.shutdown(1).await?;
                 }
-                // A panicking handler ends its own request only.
-                Some(_) = requests.join_next() => {}
-                () = linger(&quic), if draining && requests.is_empty() => return Ok(()),
-                accepted = connection.accept() => match accepted? {
-                    // h3 itself rejects only the ones after the number in the GOAWAY.
-                    Some(resolver) if draining => {
-                        requests.spawn(reject_request(resolver, self.limits.head_timeout));
-                    }
-                    Some(resolver) => {
-                        let app = Connection::new(
-                            self.app.clone(),
-                            // The address changes when the client migrates.
-                            quic.remote_address(),
-                            Security::Https,
-                        );
-                        requests.spawn(serve_request(app, resolver, self.limits.head_timeout));
-                    }
-                    // The client announced that it has no more requests, and all are answered.
-                    None => break,
-                },
+                // h3 itself rejects only the ones after the number in the GOAWAY.
+                Some(Some(resolver)) if draining => {
+                    requests.spawn(reject_request(resolver, self.limits.head_timeout));
+                }
+                Some(Some(resolver)) => {
+                    let app = Connection::new(
+                        self.app.clone(),
+                        // The address changes when the client migrates.
+                        quic.remote_address(),
+                        Security::Https,
+                    );
+                    requests.spawn(serve_request(app, resolver, self.limits.head_timeout));
+                }
+                // The client announced that it has no more requests, and all are answered.
+                Some(None) => break,
             }
         }
         while requests.join_next().await.is_some() {}
@@ -254,6 +262,7 @@ async fn try_serve_request(
             return Err(malformed.into());
         }
     };
+    let to_head = parts.method == Method::HEAD;
     let Ok(response) = app.oneshot(Request::from_parts(parts, body)).await;
-    responder.send(head::prepare(response)).await
+    responder.send(head::prepare(response), to_head).await
 }

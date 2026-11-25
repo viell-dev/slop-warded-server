@@ -54,6 +54,38 @@ async fn a_second_signal_ends_the_grace_period() {
         .unwrap();
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn signals_that_arrive_together_count_as_two() {
+    let _signals = SIGNALS.lock().await;
+    let authority = Authority::new();
+    let app = axum::Router::new().fallback(std::future::pending::<()>);
+    let bound = common::server(&authority).bind().unwrap();
+    let address: SocketAddr = bound.https_addr();
+    drop(bound);
+    let serving = tokio::spawn(common::server(&authority).https(address).serve(app));
+    let mut client = common::soon(async {
+        loop {
+            match Client::connect(Version::HTTP_2, address, &authority).await {
+                Ok(client) => break client,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+    })
+    .await;
+    tokio::spawn(async move { client.get("/").await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Blocks the only thread, so that the server sees both at once.
+    signal("-INT");
+    signal("-TERM");
+    std::thread::sleep(Duration::from_millis(100));
+    let ended = tokio::time::timeout(Duration::from_secs(5), serving).await;
+    ended
+        .expect("the second signal ends the wait")
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test]
 async fn hangup_reloads_the_certificate_and_terminate_stops() {
     let _signals = SIGNALS.lock().await;

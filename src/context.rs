@@ -1,11 +1,11 @@
 //! What every listener does to requests before the application sees them, and to its responses.
 
 use axum::{
-    body::{Body, Bytes},
+    body::{Body, Bytes, HttpBody},
     extract::ConnectInfo,
     http::{
-        HeaderMap, HeaderValue, Request, StatusCode, Version,
-        header::{CONTENT_LENGTH, COOKIE},
+        HeaderMap, HeaderValue, Method, Request, StatusCode, Version,
+        header::{CONTENT_LENGTH, COOKIE, TRANSFER_ENCODING},
     },
     response::Response,
 };
@@ -25,12 +25,12 @@ pub(crate) enum Security {
     Cleartext,
 }
 
-type App = MapResponse<axum::Router, fn(Response) -> Response>;
+type Finish = fn(Response) -> Response;
 
 /// The application as seen by one connection.
 #[derive(Clone)]
 pub(crate) struct Connection {
-    app: App,
+    app: axum::Router,
     peer: SocketAddr,
     security: Security,
 }
@@ -38,7 +38,7 @@ pub(crate) struct Connection {
 impl Connection {
     pub(crate) fn new(app: axum::Router, peer: SocketAddr, security: Security) -> Self {
         Self {
-            app: MapResponse::new(app, without_content),
+            app,
             peer: canonical(peer),
             security,
         }
@@ -47,15 +47,15 @@ impl Connection {
 
 impl<B> Service<Request<B>> for Connection
 where
-    B: axum::body::HttpBody<Data = Bytes> + Send + 'static,
+    B: HttpBody<Data = Bytes> + Send + 'static,
     B::Error: Into<axum::BoxError>,
 {
     type Response = Response;
     type Error = Infallible;
-    type Future = <App as Service<Request<Body>>>::Future;
+    type Future = <MapResponse<axum::Router, Finish> as Service<Request<Body>>>::Future;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
-        <App as Service<Request<Body>>>::poll_ready(&mut self.app, cx)
+        <axum::Router as Service<Request<Body>>>::poll_ready(&mut self.app, cx)
     }
 
     fn call(&mut self, request: Request<B>) -> Self::Future {
@@ -72,19 +72,47 @@ where
         if matches!(request.version(), Version::HTTP_2 | Version::HTTP_3) {
             join_cookies(request.headers_mut());
         }
-        self.app.call(request)
+        let finish: Finish = if request.method() == Method::HEAD {
+            finish_head
+        } else {
+            finish
+        };
+        MapResponse::new(self.app.clone(), finish).call(request)
     }
 }
 
-/// Drop content that its status rules out (RFC 9110 sections 15.3.5 and 15.4.5).
+/// Give a response the length of its content, and no content that its status rules out (RFC 9110
+/// sections 15.3.5 and 15.4.5).
 ///
-/// Of the protocol implementations, only Hyper's HTTP/1.1 does this.
-fn without_content(mut response: Response) -> Response {
-    if let StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED = response.status() {
-        *response.body_mut() = Body::empty();
-        // Axum's is about the body that it saw, and would be 0 for an empty one.
-        response.headers_mut().remove(CONTENT_LENGTH);
+/// Of the protocol implementations, only Hyper's HTTP/1.1 does all of this.
+fn finish(mut response: Response) -> Response {
+    match response.status() {
+        StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED => {
+            *response.body_mut() = Body::empty();
+            // Axum's is about the body that it saw, and would be 0 for an empty one.
+            response.headers_mut().remove(CONTENT_LENGTH);
+        }
+        status if status.is_informational() => {}
+        _ => {
+            let exact = response.body().size_hint().exact();
+            let headers = response.headers_mut();
+            if let Some(length) = exact
+                && !headers.contains_key(CONTENT_LENGTH)
+                && !headers.contains_key(TRANSFER_ENCODING)
+            {
+                headers.insert(CONTENT_LENGTH, length.into());
+            }
+        }
     }
+    response
+}
+
+/// Also take the content off the response to a HEAD request.
+///
+/// Axum does for its handlers, but the application can be any service.
+fn finish_head(response: Response) -> Response {
+    let mut response = finish(response);
+    *response.body_mut() = Body::empty();
     response
 }
 

@@ -8,6 +8,7 @@ use super::BoxError;
 use axum::{body::HttpBody, response::Response};
 use bytes::{Buf, Bytes};
 use h3::{error::Code, server::RequestStream};
+use http::header::CONTENT_LENGTH;
 use http_body::{Frame, SizeHint};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
@@ -137,14 +138,24 @@ impl Responder {
         self.finished = true;
     }
 
-    pub(super) async fn send(mut self, response: Response) -> Result<(), BoxError> {
+    /// Send a response, whose content has the length that it declares unless it is to `HEAD`.
+    pub(super) async fn send(mut self, response: Response, to_head: bool) -> Result<(), BoxError> {
         let (parts, body) = response.into_parts();
+        let mut remaining = match parts.headers.get(CONTENT_LENGTH) {
+            Some(length) if !to_head => Some(length.to_str()?.parse::<u64>()?),
+            _ => None,
+        };
         let head = http::Response::from_parts(parts, ());
         self.stream.send_response(head).await?;
         let mut body = std::pin::pin!(body);
         while let Some(frame) = std::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await {
             match frame?.into_data() {
                 Ok(data) => {
+                    if let Some(remaining) = &mut remaining {
+                        *remaining = remaining
+                            .checked_sub(data.len() as u64)
+                            .ok_or("the response is longer than its Content-Length")?;
+                    }
                     // Some clients read an empty DATA frame as the end.
                     if !data.is_empty() {
                         self.stream.send_data(data).await?;
@@ -156,6 +167,9 @@ impl Responder {
                     }
                 }
             }
+        }
+        if remaining.is_some_and(|remaining| remaining > 0) {
+            Err("the response is shorter than its Content-Length")?;
         }
         self.stream.finish().await?;
         self.finished = true;

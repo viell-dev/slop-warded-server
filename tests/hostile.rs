@@ -268,6 +268,46 @@ async fn a_failed_response_body_is_not_a_complete_one() {
 }
 
 #[tokio::test]
+async fn a_response_that_does_not_match_its_length_is_not_a_complete_one() {
+    let authority = Authority::new();
+    let app = axum::Router::new()
+        .route(
+            "/short",
+            axum_get(|| async { ([(header::CONTENT_LENGTH, "5")], stream()) }),
+        )
+        .route(
+            "/long",
+            axum_get(|| async { ([(header::CONTENT_LENGTH, "2")], stream()) }),
+        )
+        .route(
+            "/right",
+            axum_get(|| async { ([(header::CONTENT_LENGTH, "3")], stream()) }),
+        );
+    fn stream() -> Body {
+        let (mut sender, body) = channel();
+        tokio::spawn(async move { sender.send_data("abc".into()).await });
+        body
+    }
+    let running = Running::start(common::server(&authority), app);
+    for version in VERSIONS {
+        for (path, complete) in [("/short", false), ("/long", false), ("/right", true)] {
+            let mut client = Client::connect(version, running.https, &authority)
+                .await
+                .unwrap();
+            let received = match client.get(path).await {
+                Ok(response) => text(response).await.ok(),
+                Err(_) => None,
+            };
+            let expected = complete.then(|| "abc".to_owned());
+            // Hyper cuts a longer HTTP/1.1 body off at its length, which is a complete response.
+            if (version, path) != (Version::HTTP_11, "/long") {
+                assert_eq!(received, expected, "{version:?} {path}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_panicking_handler_fails_only_its_request() {
     async fn panicking() {
         panic!("expected by the test")
