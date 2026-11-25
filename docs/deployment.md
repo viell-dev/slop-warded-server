@@ -77,11 +77,15 @@ requests can finish. `LimitNOFILE` is above its connection limit. An application
 needs a place for them, such as `StateDirectory=my-site` for `/var/lib/my-site`.
 
 Certbot's files belong to `root`. Let it copy each new certificate to where the program may read it,
-with this as the executable file `/etc/letsencrypt/renewal-hooks/deploy/my-site`:
+with this as the executable file `/etc/letsencrypt/renewal-hooks/deploy/my-site`. Certbot runs it
+for every certificate that it renews, so it must name the one it is for:
 
 ```sh
 #!/bin/sh
 set -e
+if [ "$RENEWED_LINEAGE" != /etc/letsencrypt/live/example.com ]; then
+    exit 0
+fi
 install -m 640 -g my-site "$RENEWED_LINEAGE/fullchain.pem" "$RENEWED_LINEAGE/privkey.pem" /etc/my-site/
 if systemctl is-active --quiet my-site; then
     systemctl reload my-site
