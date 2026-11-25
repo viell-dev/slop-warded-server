@@ -13,8 +13,8 @@ describes the version in the navigation bar.
 
 ## Where it is released
 
-Releases are tags of [the repository](https://github.com/viell-dev/slop-warded-server/releases). It is
-not on crates.io. Depend on the exact tag, so that you choose when to move:
+Releases are tags of [the repository](https://github.com/viell-dev/slop-warded-server/releases). It
+is not on crates.io. Depend on the exact tag, so that you choose when to move:
 
 ```toml
 [dependencies]
@@ -38,6 +38,6 @@ The minimum is 1.99.1, because Warded needs it. A newer minimum can come with an
 
 ## Security fixes
 
-They land on the default branch and ship in a new release. The
-[security policy](https://github.com/viell-dev/slop-warded-server/security/policy) says how to report
-a vulnerability.
+They land on the default branch and ship in a new release. The [security
+policy](https://github.com/viell-dev/slop-warded-server/security/policy) says how to report a
+vulnerability.

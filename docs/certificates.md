@@ -11,13 +11,13 @@ The server reads both from PEM files:
 WARDED_TLS_CERT=fullchain.pem WARDED_TLS_KEY=privkey.pem cargo run
 ```
 
-The first file is the chain: the server's own certificate, then the intermediate ones of the authority
-that issued it.
+The first file is the chain: the server's own certificate, then the intermediate ones of the
+authority that issued it.
 
 ## For development
 
-Without files, the server generates a certificate for `localhost` each time it starts. Clients do not
-trust it: browsers show a warning, and curl needs `--insecure`.
+Without files, the server generates a certificate for `localhost` each time it starts. Clients do
+not trust it: browsers show a warning, and curl needs `--insecure`.
 
 [mkcert](https://github.com/FiloSottile/mkcert) makes one that this computer trusts:
 
@@ -27,8 +27,17 @@ mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1 ::1
 WARDED_TLS_CERT=cert.pem WARDED_TLS_KEY=key.pem cargo run
 ```
 
-Keep the key out of version control. Browsers then show no warning, but still use HTTP/2; see [HTTP/3
-in browsers](./http3.md#in-browsers).
+Without mkcert, OpenSSL makes one that nothing trusts, but that stays the same when the server
+starts again:
+
+```sh
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 90 \
+    -keyout key.pem -out cert.pem -subj /CN=localhost \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
+```
+
+Keep the key out of version control. Browsers then show no warning, but still use HTTP/2; see
+[HTTP/3 in browsers](./http3.md#in-browsers).
 
 ## For the public
 
@@ -56,7 +65,8 @@ redirect around the renewal.
 ## Renewing
 
 Certificates expire, so they are renewed every few weeks. New files take effect for new connections
-when the process receives `SIGHUP`, on Unix:
+when the process receives `SIGHUP`, on Unix, for example with `kill -HUP` and its process number.
+With Certbot and [systemd](./deployment.md#systemd):
 
 ```sh
 sudo certbot renew --deploy-hook "systemctl reload my-service"
@@ -64,6 +74,10 @@ sudo certbot renew --deploy-hook "systemctl reload my-service"
 
 If the new files cannot be used, the server logs why and keeps the previous certificate. Connections
 that are open keep theirs.
+
+`Server::serve` listens for the signal. With `serve_until`, [spawn
+`reload_on_hangup`](./existing-axum.md#decide-when-to-stop), because `SIGHUP` otherwise ends the
+process.
 
 On Windows, or to decide the moment yourself, keep a clone of the `Tls` and reload it from code:
 

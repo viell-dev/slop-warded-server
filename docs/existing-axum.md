@@ -6,6 +6,13 @@ description: "Serve an Axum application over HTTP/1.1, HTTP/2 and HTTP/3, and pu
 
 ## Serve it
 
+Add the dependency:
+
+```toml
+[dependencies]
+warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.1" }
+```
+
 Replace the listener and `axum::serve` with `Server`:
 
 ```diff
@@ -14,14 +21,33 @@ Replace the listener and `axum::serve` with `Server`:
 +warded_server::Server::from_env()?.serve(app).await?;
 ```
 
+The application moves with that: by default it is now at `https://localhost:8443`, for this computer
+only, with a certificate that nothing trusts. [Configuration](./configuration.md) and
+[certificates](./certificates.md) change that.
+
+The server tells its address, and what is wrong, through `tracing`. If the application has no
+subscriber yet, add one, or nothing is shown:
+
+```sh
+cargo add tracing-subscriber
+```
+
+```rust
+fn main() {
+    tracing_subscriber::fmt::init();
+    // Then run the server.
+}
+```
+
 The application needs no other changes. Its state, extractors, layers, 404s and 405s stay as they
 are. A few things work differently underneath:
 
-- **`ConnectInfo<SocketAddr>` is always there**, so drop `into_make_service_with_connect_info`.
+- **`ConnectInfo<SocketAddr>` is always there**, so drop `into_make_service_with_connect_info`,
+  which `serve` does not accept.
 - **Shutdown is built in**, so drop `with_graceful_shutdown`. To decide it yourself, use
   [`serve_until`](#decide-when-to-stop).
-- **Handlers can see HTTP/2 and HTTP/3**, where the host is in the URI. Axum's own extractors know
-  that. Code that reads the `Host` field does not.
+- **Handlers can see HTTP/2 and HTTP/3**, where the host is in the URI and there is no `Host` field.
+  Read `uri.host()` first, and then `Host`.
 - **WebSockets keep working over HTTP/1.1**, which browsers use for them.
 
 Any other Tower service works too, if its requests and responses have Axum's types and its error is
@@ -30,7 +56,8 @@ Any other Tower service works too, if its requests and responses have Axum's typ
 ## Put Warded in front
 
 Warded can decide by anything in the request head and hand the rest to the application. Here one
-customer tries a new version, and the HTTP/3 clients get a hint, without changing either application:
+customer tries a new version, and the HTTP/3 clients get a hint, without changing either
+application:
 
 ```rust
 use axum::{Router, body::Body, http::Request, routing::get};
@@ -82,7 +109,8 @@ or never.
 
 ## Decide when to stop
 
-`serve` listens for signals. `bind` and `serve_until` take that decision, and give you the addresses:
+`serve` listens for signals. `bind` and `serve_until` take that decision, and give you the
+addresses:
 
 ```rust,no_run
 use axum::{Router, routing::get};
@@ -97,6 +125,8 @@ async fn main() -> Result<(), warded_server::Error> {
     let bound = server.bind()?;
     println!("ready on {}", bound.https_addr());
     // Anything else that starts after the ports are taken, such as dropping privileges, goes here.
+    // Without this, SIGHUP would end the process.
+    tokio::spawn(warded_server::reload_on_hangup(tls));
     bound
         .serve_until(app, async {
             warded_server::shutdown().await;
@@ -106,5 +136,6 @@ async fn main() -> Result<(), warded_server::Error> {
 }
 ```
 
-`serve` also reloads certificate files on `SIGHUP`. With `serve_until`, keep a clone of the `Tls` and
-call its `reload` method.
+`serve` reloads certificate files on `SIGHUP`. With `serve_until`, **`SIGHUP` ends the process**
+unless you spawn `reload_on_hangup`, as here, or handle the signal yourself and call `Tls::reload`.
+A second Ctrl+C does nothing here, either, so keep the grace period short enough.

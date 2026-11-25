@@ -5,8 +5,8 @@ description: "Declare Warded routes to Axum handlers, read path captures, and se
 # Routes and requests
 
 A route is a condition on the request and a destination. This page shows the parts you need to write
-them for this server. [Warded's guides](https://viell-dev.github.io/slop-warded-router/) explain every
-condition in full.
+them for this server. [Warded's guides](https://viell-dev.github.io/slop-warded-router/) explain
+every condition in full.
 
 ## Declaring routes
 
@@ -83,11 +83,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-- **Order matters.** The first route whose conditions all hold is selected, and its response is final.
-- **`get()` does not include HEAD.** Write `get().or(head())` where clients should be able to ask for
-  the head alone; Axum then leaves out the body.
+- **Order matters.** The first route whose conditions all hold is selected, and its response is
+  final.
+- **`get()` does not include HEAD.** Write `get().or(head())` where clients should be able to ask
+  for the head alone; Axum then leaves out the body.
 - **Paths are exact.** `/orders` and `/orders/` are different, and `path` fails when the pattern is
-  wrong, so definition errors appear at start.
+  wrong, so definition errors appear at start. Captures are written `{id}` and need `path`;
+  `exact_path("/orders/{id}")` and `path("/orders/:id")` are literal text that nobody asks for.
 - **Nothing selected is a 404.** For 405 responses, let an Axum method router handle the methods:
   `.route(exact_path("/orders"), axum::routing::get(list_orders).post(create_order))`.
 
@@ -102,8 +104,12 @@ A destination is any Tower service with Axum's request and response types. In pr
 | `axum::routing::get(a).post(b)`           | One path with several methods, and a 405 for others |
 | `axum::Router`                            | A whole Axum application, or a Tower service in one |
 
-Inside handlers, use Axum's extractors. One differs: Axum's `Path` does not see Warded's captures, so
-use `Params`, whose fields are the names in the pattern. Both decode the values.
+Inside handlers, use Axum's extractors. One differs: Axum's `Path` does not see Warded's captures,
+so use `Params`. It takes a struct whose fields are the names in the pattern, also for a single
+capture, and decodes the values. If the names differ, every request gets a 400.
+
+`get` and `post` are conditions in `warded::matchers` and functions in `axum::routing`. Where you
+need both, import one under another name, or write `axum::routing::get`.
 
 ## What a request carries
 
@@ -145,8 +151,8 @@ The security context is what the server saw: `Https` over TLS and QUIC, and `Uns
 cleartext listener. It never comes from a header.
 
 The host is the one difference between protocols that a handler notices. HTTP/1.1 clients name it in
-the `Host` field, and HTTP/2 and HTTP/3 clients in the URI. Check `uri.host()` first, and `Host` when
-there is none.
+the `Host` field, and HTTP/2 and HTTP/3 clients in the URI. Check `uri.host()` first, and `Host`
+when there is none.
 
 ## When a condition fails
 

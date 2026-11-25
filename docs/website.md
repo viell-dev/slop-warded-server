@@ -50,17 +50,24 @@ escapes values, so text from visitors cannot add markup.
 ## Static files
 
 `ServeDir` from `tower-http` serves the directory with content types, range requests and
-`Last-Modified`. It reads from the directory where the server is started, so copy `static/` along when
-you [deploy](./deployment.md).
+`Last-Modified`. It reads from the directory where the server is started, so copy `static/` along
+when you [deploy](./deployment.md).
 
 To let browsers keep files without asking again, put a version in their names, such as
-`style.3f9a.css`, and add a long `Cache-Control` to that route only:
+`style.3f9a.css`, and change the name whenever the file changes. Build tools such as Vite do both,
+or rename the file by hand. Then add a long `Cache-Control` to that route only, and only for files
+that exist:
+
+```sh
+cargo add tower-http --features set-header
+```
 
 ```rust
 use axum::{
     Router,
     body::Body,
-    http::{HeaderValue, Request, header::CACHE_CONTROL},
+    http::{HeaderValue, Request, StatusCode, header::CACHE_CONTROL},
+    response::Response,
 };
 use tower::ServiceExt;
 use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
@@ -74,15 +81,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let forever = HeaderValue::from_static("public, max-age=31536000, immutable");
     let files = Router::new()
         .nest_service("/static", ServeDir::new(directory.path()))
-        .layer(SetResponseHeaderLayer::if_not_present(CACHE_CONTROL, forever));
+        .layer(SetResponseHeaderLayer::if_not_present(
+            CACHE_CONTROL,
+            move |response: &Response| {
+                let found = response.status().is_success()
+                    || response.status() == StatusCode::NOT_MODIFIED;
+                found.then(|| forever.clone())
+            },
+        ));
     let routes = warded::Router::new().route(path("/static/{*file}")?, files);
 
-    let request = Request::builder()
-        .uri("/static/style.3f9a.css")
-        .body(Body::empty())?;
-    let response = warded_server::app(routes).oneshot(request).await?;
-    assert_eq!(response.headers()["content-type"], "text/css");
-    assert!(response.headers()[CACHE_CONTROL].to_str()?.contains("immutable"));
+    let app = warded_server::app(routes);
+    for (uri, cached) in [("/static/style.3f9a.css", true), ("/static/old.css", false)] {
+        let request = Request::builder().uri(uri).body(Body::empty())?;
+        let response = app.clone().oneshot(request).await?;
+        assert_eq!(response.headers().contains_key(CACHE_CONTROL), cached, "{uri}");
+    }
     Ok(())
 }
 ```
@@ -99,14 +113,20 @@ regional languages, a language picker and many pages.
 
 ## Forms
 
-Show the form on GET and handle it on POST, then redirect, so that reloading does not send it again:
+Show the form on GET and handle it on POST, then redirect, so that reloading does not send it again.
+When the input is wrong, show the form again, with the reason:
+
+```sh
+cargo add serde --features derive
+```
 
 ```rust
 use axum::{
     Form,
     body::Body,
+    extract::rejection::FormRejection,
     http::{Request, StatusCode, header::CONTENT_TYPE},
-    response::{Html, Redirect},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::any,
 };
 use serde::Deserialize;
@@ -121,35 +141,51 @@ struct Subscription {
     email: String,
 }
 
-async fn form() -> Html<&'static str> {
-    Html(
-        r#"<form method="post"><input type="email" name="email" required>
-        <button>Subscribe</button></form>"#,
-    )
+/// The form, with what went wrong before. Use a template for it in a real site.
+fn form(problem: &str) -> Html<String> {
+    Html(format!(
+        r#"<p>{problem}</p><form method="post"><input type="email" name="email" required>
+        <button>Subscribe</button></form>"#
+    ))
 }
 
-async fn subscribe(Form(subscription): Form<Subscription>) -> Result<Redirect, StatusCode> {
-    if !subscription.email.contains('@') {
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
-    }
-    // Store it here.
-    Ok(Redirect::to("/thanks"))
+async fn show_form() -> Html<String> {
+    form("")
+}
+
+async fn subscribe(input: Result<Form<Subscription>, FormRejection>) -> Response {
+    let problem = match input {
+        Ok(Form(subscription)) if subscription.email.contains('@') => {
+            // Store it here.
+            return Redirect::to("/thanks").into_response();
+        }
+        Ok(_) => "That is not an e-mail address.",
+        // A field is missing, or the body is not a form.
+        Err(_) => "Please fill in the form.",
+    };
+    (StatusCode::UNPROCESSABLE_ENTITY, form(problem)).into_response()
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = Router::new()
-        .route(get().and(exact_path("/subscribe")), any(form))
+        .route(get().and(exact_path("/subscribe")), any(show_form))
         .route(post().and(exact_path("/subscribe")), any(subscribe));
+    let app = warded_server::app(routes);
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/subscribe")
-        .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from("email=someone%40example.com"))?;
-    let response = warded_server::app(routes).oneshot(request).await?;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()["location"], "/thanks");
+    for (body, status) in [
+        ("email=someone%40example.com", StatusCode::SEE_OTHER),
+        ("email=someone", StatusCode::UNPROCESSABLE_ENTITY),
+        ("", StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/subscribe")
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(body))?;
+        let response = app.clone().oneshot(request).await?;
+        assert_eq!(response.status(), status, "{body}");
+    }
     Ok(())
 }
 ```

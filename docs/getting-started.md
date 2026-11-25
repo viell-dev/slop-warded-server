@@ -5,14 +5,14 @@ description: "Create a project from a template, or add the server to one you hav
 # Getting started
 
 Warded Server is a library that runs your application over HTTP/1.1, HTTP/2 and HTTP/3. You write
-routes and handlers; it takes care of listening, TLS, QUIC, shutdown and limits. Templates give you a
-working project to start from.
+routes and handlers; it takes care of listening, TLS, QUIC, shutdown and limits. Templates give you
+a working project to start from.
 
 ## What you need
 
 - Rust 1.99.1 or later, from [rustup](https://rustup.rs).
-- A C compiler, for the cryptography library. On Windows the Visual Studio build tools that Rust uses
-  include one. On Debian and Ubuntu, install `build-essential`.
+- A C compiler, for the cryptography library. On Windows the Visual Studio build tools that Rust
+  uses include one. On Debian and Ubuntu, install `build-essential`.
 - [cargo-generate](https://cargo-generate.github.io/cargo-generate/installation.html) 0.26 or later,
   to use the templates:
 
@@ -37,19 +37,19 @@ It asks for a template and a project name, and makes a directory with that name:
 To skip the questions, name both:
 
 ```sh
-cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.1 --name my-api
+cargo generate viell-dev/slop-warded-server templates/minimal --tag 0.1.0-alpha.1 --name my-app
 ```
 
 ## Run it
 
 ```sh
-cd my-api
+cd my-app
 cargo run
 ```
 
-The first build takes a minute or so. When the log says `serving`, the server is at
-`https://localhost:8443`. It made a certificate that nothing trusts, so a browser warns about it and
-curl needs `--insecure`:
+The first build takes a minute or so. The `api` template has its routes below `/notes` instead of at
+`/`. When the log says `serving`, the server is at `https://localhost:8443`. It made a certificate
+that nothing trusts, so a browser warns about it and curl needs `--insecure`:
 
 ```sh
 curl --insecure --http1.1 https://localhost:8443/
@@ -68,8 +68,9 @@ The minimal template's `src/main.rs` is a whole application:
 
 <<< ../templates/minimal/src/main.rs
 
-- **`Router::new().route(condition, handler)`** adds a route. Routes are tried in order, and the first
-  whose conditions all hold gets the request. [Routes and requests](./requests.md) introduces them.
+- **`Router::new().route(condition, handler)`** adds a route. Routes are tried in order, and the
+  first whose conditions all hold gets the request. [Routes and requests](./requests.md) introduces
+  them.
 - **`any(home)`** turns an Axum handler into a destination. Warded already selects on the method, so
   the handler takes any.
 - **`warded_server::app(routes)`** makes an `axum::Router` of them, which accepts
@@ -92,7 +93,27 @@ Use Warded through `warded_server::warded`, as the examples here do. A direct de
 version of `warded` would be a separate library to Rust, whose `secured()` condition does not see
 what the server knows about the connection.
 
+The server logs through [`tracing`](https://docs.rs/tracing), and shows nothing without a
+subscriber. Add one to see its address and its warnings:
+
+```sh
+cargo add tracing-subscriber
+```
+
+```rust
+fn main() {
+    tracing_subscriber::fmt::init();
+    // Then run the server.
+}
+```
+
 If you have an Axum application, see [existing Axum applications](./existing-axum.md).
+
+### About the examples
+
+The examples on this site are complete programs that check themselves, so that they stay correct. In
+your project, put `app` in a module, its checks in tests, and `serve` in `main`. An example that
+needs more than its template has starts with the `cargo add` commands for it.
 
 ### Features
 
@@ -107,8 +128,8 @@ All are on by default. Turn them off with `default-features = false` and list th
 ## Update or remove
 
 To update, change the `tag` in `Cargo.toml` and run `cargo update warded-server`. Read the
-[changelog](./changelog.md) first: any alpha may break your code. Files that a template generated are
-yours, and nothing updates them.
+[changelog](./changelog.md) first: any alpha may break your code. Files that a template generated
+are yours, and nothing updates them.
 
 To remove the server, replace it with `axum::serve` and delete the dependency:
 
@@ -123,12 +144,13 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-Warded routes work there too; see [its guide](https://viell-dev.github.io/slop-warded-router/tower.html).
+Warded routes work there too; see [its
+guide](https://viell-dev.github.io/slop-warded-router/tower.html).
 
 ## Next steps
 
 - Build something: a [JSON API](./json-api.md), a [website](./website.md) or a
   [single-page app](./single-page-app.md).
-- Make it ready for others: [configuration](./configuration.md), [certificates](./certificates.md) and
-  [deployment](./deployment.md).
+- Make it ready for others: [configuration](./configuration.md), [certificates](./certificates.md)
+  and [deployment](./deployment.md).
 - Know what is missing: [limits](./limits.md).
