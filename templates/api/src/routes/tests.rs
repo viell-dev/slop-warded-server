@@ -51,7 +51,8 @@ async fn bad_requests_are_refused() {
             StatusCode::UNPROCESSABLE_ENTITY,
         ),
     ] {
-        let (status, _) = send(&app, method, uri, body).await;
+        let (status, body) = send(&app, method, uri, body).await;
         assert_eq!(status, expected, "{method} {uri}");
+        assert!(body["error"].is_string(), "{method} {uri}: {body}");
     }
 }

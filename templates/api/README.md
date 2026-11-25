@@ -28,7 +28,7 @@ Set these environment variables to run it elsewhere:
 | `WARDED_TLS_KEY`     | PEM private key file                       | generated        |
 | `WARDED_HTTP3`       | `on` or `off`                              | `on`             |
 | `WARDED_PUBLIC_PORT` | HTTPS port that clients use, if it differs | the bound port   |
-| `RUST_LOG`           | What to log                                | `info`           |
+| `RUST_LOG`           | What to log                                | see `main.rs`    |
 
 The generated certificate is for development. No client trusts it, and it is only used while the
 server listens on this computer alone. Browsers use HTTP/3 only with a certificate they trust.
