@@ -1,4 +1,4 @@
-use crate::{Error, Limits, Tls, listener, redirect, signal, tcp};
+use crate::{Error, Limits, Tls, development, listener, redirect, signal, tcp};
 use axum::{extract::Request, http::HeaderValue, http::header::ALT_SVC, response::IntoResponse};
 use axum_server::Control;
 use std::{
@@ -18,7 +18,8 @@ const ALT_SVC_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 /// A server for one application over HTTP/1.1, HTTP/2 and HTTP/3.
 ///
 /// HTTPS listens on one address: TCP for HTTP/1.1 and HTTP/2, and UDP on the same port for
-/// HTTP/3, which HTTPS responses advertise. A second, cleartext listener is optional.
+/// HTTP/3, which HTTPS responses advertise. A cleartext listener and a
+/// [development address](Server::development) are optional.
 ///
 /// ```no_run
 /// use warded_server::{Server, Tls, axum::{Router, routing::get}};
@@ -38,6 +39,8 @@ pub struct Server {
     tls: Tls,
     https: SocketAddr,
     http: Option<(SocketAddr, Cleartext)>,
+    development: Option<SocketAddr>,
+    live_reload: bool,
     http3: bool,
     public_port: Option<u16>,
     limits: Limits,
@@ -51,12 +54,15 @@ enum Cleartext {
 }
 
 impl Server {
-    /// Start from the defaults: HTTPS on `127.0.0.1:8443`, HTTP/3 on, no cleartext listener.
+    /// Start from the defaults: HTTPS on `127.0.0.1:8443`, HTTP/3 on, no cleartext listener and no
+    /// development address.
     pub fn new(tls: Tls) -> Self {
         Self {
             tls,
             https: (Ipv4Addr::LOCALHOST, 8443).into(),
             http: None,
+            development: None,
+            live_reload: true,
             http3: true,
             public_port: None,
             limits: Limits::default(),
@@ -84,6 +90,33 @@ impl Server {
     /// `secured()` conditions read. Nothing about a reverse proxy is trusted.
     pub fn serve_http(mut self, address: SocketAddr) -> Self {
         self.http = Some((address, Cleartext::Application));
+        self
+    }
+
+    /// Also serve the application over cleartext HTTP on this loopback address, for a browser on
+    /// this computer.
+    ///
+    /// Browsers open `http://127.0.0.1` without a certificate, and treat it as a secure context, as
+    /// they do `http://localhost`. They use HTTP/1.1 there. Requests carry the security context
+    /// `Unsecure`, so Warded's `secured()` condition does not hold for them. HTML pages reload by
+    /// themselves when the server restarts, unless [`live_reload`](Self::live_reload) is off.
+    ///
+    /// The server logs the address to open. It is a listener of its own, beside
+    /// [`redirect_http`](Self::redirect_http) or [`serve_http`](Self::serve_http). Nothing on it is
+    /// encrypted, so [`bind`](Self::bind) refuses an address that is not loopback.
+    pub fn development(mut self, address: SocketAddr) -> Self {
+        self.development = Some(address);
+        self
+    }
+
+    /// Whether pages from the development address reload when the server restarts.
+    ///
+    /// Each HTML page that a browser opens there gets a small script, which waits for the server to
+    /// go away, after a rebuild for instance, and reloads the page when it is back. Responses on
+    /// the development address are therefore not compressed. Turn it off for tools that bring
+    /// their own, such as cargo-leptos or Vite. Default: on.
+    pub fn live_reload(mut self, enabled: bool) -> Self {
+        self.live_reload = enabled;
         self
     }
 
@@ -118,14 +151,21 @@ impl Server {
 
     /// Bind every listener, without accepting anything yet.
     ///
-    /// Nothing stays bound when one of them fails, or when the [`Limits`] are unusable. Call this
-    /// inside a Tokio runtime.
+    /// Nothing stays bound when one of them fails, when the [`Limits`] are unusable, or when the
+    /// development address is not a loopback address. Call this inside a Tokio runtime.
     pub fn bind(self) -> Result<BoundServer, Error> {
         self.limits.validate()?;
+        if let Some(address) = self.development.filter(|address| !is_loopback(*address)) {
+            return Err(Error::Development { address });
+        }
         let (https, quic) = self.bind_https()?;
         let http = self
             .http
             .map(|(address, _)| listener::tcp(address, "HTTP over TCP"))
+            .transpose()?;
+        let development = self
+            .development
+            .map(|address| listener::tcp(address, "development over HTTP"))
             .transpose()?;
         Ok(BoundServer {
             https_addr: local(&https, self.https)?,
@@ -133,9 +173,14 @@ impl Server {
                 (Some(listener), Some((address, _))) => Some(local(listener, address)?),
                 _ => None,
             },
+            development_addr: match (&development, self.development) {
+                (Some(listener), Some(address)) => Some(local(listener, address)?),
+                _ => None,
+            },
             server: self,
             https,
             http,
+            development,
             quic,
         })
     }
@@ -200,6 +245,11 @@ impl Server {
     }
 }
 
+/// Whether only programs on this computer can reach the address.
+pub(crate) fn is_loopback(address: SocketAddr) -> bool {
+    address.ip().to_canonical().is_loopback()
+}
+
 fn local(listener: &TcpListener, requested: SocketAddr) -> Result<SocketAddr, Error> {
     listener.local_addr().map_err(|source| Error::Bind {
         listener: "TCP",
@@ -217,6 +267,8 @@ pub struct BoundServer {
     https_addr: SocketAddr,
     http: Option<TcpListener>,
     http_addr: Option<SocketAddr>,
+    development: Option<TcpListener>,
+    development_addr: Option<SocketAddr>,
     #[cfg(feature = "http3")]
     quic: Option<std::net::UdpSocket>,
     #[cfg(not(feature = "http3"))]
@@ -238,6 +290,12 @@ impl BoundServer {
     #[must_use]
     pub fn http_addr(&self) -> Option<SocketAddr> {
         self.http_addr
+    }
+
+    /// The [development address](Server::development), if there is one.
+    #[must_use]
+    pub fn development_addr(&self) -> Option<SocketAddr> {
+        self.development_addr
     }
 
     /// Serve until `shutdown` completes, then let requests in progress finish.
@@ -304,7 +362,14 @@ impl BoundServer {
                 Cleartext::Application => app.clone(),
             };
             let shared = shared.clone();
-            listeners.spawn(async move { tcp::serve_http(listener, app, &shared).await });
+            listeners.spawn(async move { tcp::serve_http(listener, app, &shared, "HTTP").await });
+        }
+        if let Some(listener) = self.development {
+            let live_reload = self.server.live_reload;
+            let app = development::app(app.clone(), live_reload, stopping.events.clone());
+            let shared = shared.clone();
+            listeners
+                .spawn(async move { tcp::serve_http(listener, app, &shared, "development").await });
         }
 
         // HTTP/3 clients also need to hear that it is still there.
@@ -329,9 +394,17 @@ impl BoundServer {
         tracing::info!(
             https = %self.https_addr,
             http = self.http_addr.map(tracing::field::display),
+            development = self.development_addr.map(tracing::field::display),
             http3 = advertise,
             "serving"
         );
+        // A URL that terminals let people click, for a browser on this computer.
+        if let Some(address) = self.development_addr {
+            tracing::info!("open http://{address}/ in a browser");
+        } else if is_loopback(self.https_addr) {
+            let port = self.https_addr.port();
+            tracing::info!("open https://localhost:{port}/ in a browser");
+        }
         let result = tokio::select! {
             () = shutdown => Ok(()),
             Some(ended) = listeners.join_next() => ended.unwrap_or_else(|panic| {
@@ -361,6 +434,8 @@ impl BoundServer {
 struct Stopping {
     tcp: Control,
     quic: CancellationToken,
+    /// Ends the event streams of live reload, which would otherwise last the whole grace period.
+    events: CancellationToken,
     abort: CancellationToken,
 }
 
@@ -369,6 +444,7 @@ impl Stopping {
         // The grace period is timed once, for all listeners.
         self.tcp.graceful_shutdown(None);
         self.quic.cancel();
+        self.events.cancel();
     }
 
     fn abort(&self) {

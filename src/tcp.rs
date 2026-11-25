@@ -72,12 +72,15 @@ pub(crate) async fn serve_https(
 }
 
 /// Serve cleartext HTTP until the shared control stops it and its connections have ended.
+///
+/// `name` is the listener's, for its errors.
 pub(crate) async fn serve_http(
     listener: TcpListener,
     app: axum::Router,
     shared: &Shared,
+    name: &'static str,
 ) -> Result<(), Error> {
-    let listener = axum_server::from_tcp(listener).map_err(stopped(HTTP))?;
+    let listener = axum_server::from_tcp(listener).map_err(stopped(name))?;
     configure(listener, &shared.limits)
         .handle(Handle::with_control(shared.control.clone()))
         .acceptor(shared.admit())
@@ -86,11 +89,10 @@ pub(crate) async fn serve_http(
         })
         .serve(connections(app, Security::Cleartext))
         .await
-        .map_err(stopped(HTTP))
+        .map_err(stopped(name))
 }
 
 const HTTPS: &str = "HTTPS";
-const HTTP: &str = "HTTP";
 
 fn stopped(listener: &'static str) -> impl Fn(io::Error) -> Error {
     move |source| Error::Listener { listener, source }

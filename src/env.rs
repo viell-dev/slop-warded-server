@@ -1,8 +1,9 @@
-use crate::{Error, Server, Tls};
+use crate::{Error, Server, Tls, server::is_loopback};
 use std::{net::SocketAddr, str::FromStr};
 
 const HTTPS_ADDR: &str = "WARDED_HTTPS_ADDR";
 const HTTP_ADDR: &str = "WARDED_HTTP_ADDR";
+const DEV_ADDR: &str = "WARDED_DEV_ADDR";
 const TLS_CERT: &str = "WARDED_TLS_CERT";
 const TLS_KEY: &str = "WARDED_TLS_KEY";
 const HTTP3: &str = "WARDED_HTTP3";
@@ -15,6 +16,7 @@ impl Server {
     /// | -------------------- | ------------------------------------------- | ---------------- |
     /// | `WARDED_HTTPS_ADDR`  | HTTPS address, over TCP and UDP             | `127.0.0.1:8443` |
     /// | `WARDED_HTTP_ADDR`   | Cleartext address that redirects to HTTPS   | none             |
+    /// | `WARDED_DEV_ADDR`    | [Development address], on loopback          | none             |
     /// | `WARDED_TLS_CERT`    | PEM certificate chain file                  | see below        |
     /// | `WARDED_TLS_KEY`     | PEM private key file                        | see below        |
     /// | `WARDED_HTTP3`       | `on` or `off`                               | `on`             |
@@ -23,6 +25,11 @@ impl Server {
     /// Without a certificate and key, and only while HTTPS listens on a loopback address, the
     /// server generates a certificate for `localhost` that no client trusts. Listening anywhere
     /// else needs a real one. An empty variable counts as unset.
+    ///
+    /// The templates set `WARDED_DEV_ADDR` in `.cargo/config.toml`, which `cargo run` reads and a
+    /// program started without Cargo does not. A variable that is already set takes precedence.
+    ///
+    /// [Development address]: Server::development
     pub fn from_env() -> Result<Self, Error> {
         Self::from_variables(|name| match std::env::var(name) {
             Ok(value) => Ok(Some(value)),
@@ -54,6 +61,14 @@ impl Server {
         if let Some(address) = parse(HTTP_ADDR, get(HTTP_ADDR)?, ADDRESS)? {
             server = server.redirect_http(address);
         }
+        if let Some(address) = parse(DEV_ADDR, get(DEV_ADDR)?, LOOPBACK)? {
+            if !is_loopback(address) {
+                let reason =
+                    "must be a loopback address, such as 127.0.0.1:3000, because it has no TLS";
+                return Err(invalid(DEV_ADDR, reason));
+            }
+            server = server.development(address);
+        }
         if let Some(port) = parse(PUBLIC_PORT, get(PUBLIC_PORT)?, "a port number")? {
             server = server.public_port(port);
         }
@@ -66,6 +81,7 @@ impl Server {
 }
 
 const ADDRESS: &str = "an address and port, such as [::]:443";
+const LOOPBACK: &str = "an address and port, such as 127.0.0.1:3000";
 
 fn parse<T: FromStr>(
     variable: &'static str,
@@ -115,8 +131,23 @@ mod tests {
     #[test]
     fn development_needs_nothing() {
         assert!(configure(&[]).is_ok());
-        assert!(configure(&[(HTTPS_ADDR, ""), (HTTP3, "")]).is_ok());
+        assert!(configure(&[(HTTPS_ADDR, ""), (HTTP3, ""), (DEV_ADDR, "")]).is_ok());
         assert!(configure(&[(HTTPS_ADDR, "[::1]:9443"), (HTTP3, "off")]).is_ok());
+    }
+
+    #[test]
+    fn the_development_address_stays_on_this_computer() {
+        for address in ["127.0.0.1:3000", "[::1]:3000", "[::ffff:127.0.0.1]:3000"] {
+            assert!(configure(&[(DEV_ADDR, address)]).is_ok(), "{address}");
+        }
+        for address in ["0.0.0.0:3000", "[::]:3000", "192.0.2.1:3000"] {
+            let error = configure(&[(DEV_ADDR, address)]).unwrap_err();
+            assert_eq!(
+                error,
+                "WARDED_DEV_ADDR must be a loopback address, such as 127.0.0.1:3000, because it \
+                 has no TLS"
+            );
+        }
     }
 
     #[test]
@@ -134,6 +165,7 @@ mod tests {
         for (variables, expected) in [
             (&[(HTTPS_ADDR, "localhost")][..], HTTPS_ADDR),
             (&[(HTTP_ADDR, "80")], HTTP_ADDR),
+            (&[(DEV_ADDR, "localhost:3000")], DEV_ADDR),
             (&[(HTTP3, "yes")], HTTP3),
             (&[(PUBLIC_PORT, "65536")], PUBLIC_PORT),
             (&[(TLS_CERT, "chain.pem")], TLS_KEY),

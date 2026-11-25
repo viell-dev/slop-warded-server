@@ -18,8 +18,17 @@ publish = false
 all-features = true
 
 [features]
-default = ["http3", "self-signed", "warded"]
-http3 = ["dep:bytes", "dep:h3", "dep:http-body", "dep:httpdate", "dep:nix", "dep:quinn"]
+default = ["files", "http3", "logging", "middleware", "self-signed", "warded"]
+files = ["dep:tower-http", "tower-http/fs", "tower-http/set-header"]
+http3 = ["dep:bytes", "dep:h3", "dep:httpdate", "dep:nix", "dep:quinn"]
+logging = ["dep:tracing-subscriber"]
+middleware = [
+    "dep:tower-http",
+    "tower-http/catch-panic",
+    "tower-http/compression-br",
+    "tower-http/compression-gzip",
+    "tower-http/trace",
+]
 self-signed = ["dep:rcgen"]
 warded = [
     "dep:form_urlencoded",
@@ -38,7 +47,7 @@ bytes = { version = "1", optional = true }
 form_urlencoded = { version = "1", optional = true }
 h3 = { version = "=0.0.8", optional = true }
 http = "1.5"
-http-body = { version = "1", optional = true }
+http-body = "1"
 httpdate = { version = "1", optional = true }
 percent-encoding = { version = "2", optional = true }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"], optional = true }
@@ -52,7 +61,10 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", optional = true }
+tower-livereload = "0.10.3"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", optional = true, features = ["env-filter"] }
 warded = { version = "=0.1.0-beta.5", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -67,6 +79,7 @@ hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false }
@@ -78,11 +91,23 @@ name = "hello"
 required-features = ["self-signed", "warded"]
 
 [[test]]
+name = "development"
+required-features = ["http3", "middleware", "self-signed", "warded"]
+
+[[test]]
+name = "helpers"
+required-features = ["files", "http3", "middleware", "self-signed", "warded"]
+
+[[test]]
 name = "hostile"
 required-features = ["http3", "self-signed", "warded"]
 
 [[test]]
 name = "lifecycle"
+required-features = ["http3", "self-signed", "warded"]
+
+[[test]]
+name = "log"
 required-features = ["http3", "self-signed", "warded"]
 
 [[test]]

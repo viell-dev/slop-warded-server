@@ -27,17 +27,32 @@
 //!
 //! - [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo), the client's address;
 //! - with the `warded` feature, `warded::TransportSecurity`: `Https` over TLS or QUIC and
-//!   `Unsecure` on the cleartext listener. Headers from a proxy are never trusted.
+//!   `Unsecure` on the cleartext listener and the development address. Headers from a proxy are
+//!   never trusted.
 //!
 //! HTTP/2 and HTTP/3 requests have their host in the URI instead of a `Host` field.
+//!
+//! # Starting points
+//!
+//! Thin helpers over Axum, `tower-http` and `tracing-subscriber` set up what most projects need,
+//! and stay out of the way of anything else:
+//!
+//! - [`Server::development`]: the application over plain HTTP for a browser on this computer,
+//!   with pages that reload when the server restarts.
+//! - [`init_logging`]: logging to the terminal, as `RUST_LOG` says.
+//! - [`DefaultMiddleware`]: logging of requests, compression and a 500 for panics.
+//! - [`StaticFiles`] and [`SinglePageApp`]: files from a directory.
 //!
 //! # Features
 //!
 //! All are enabled by default:
 //!
+//! - `files`: `StaticFiles` and, with `warded`, `SinglePageApp`.
 //! - `http3`: HTTP/3 over QUIC. The underlying [`h3`](https://github.com/hyperium/h3) library is
 //!   experimental and has
 //!   [known weaknesses](https://viell-dev.github.io/slop-warded-server/limits.html#http-3).
+//! - `logging`: `init_logging`.
+//! - `middleware`: `DefaultMiddleware`.
 //! - `self-signed`: `Tls::self_signed`, for development.
 //! - `warded`: `app`, `Params` and the security context.
 
@@ -49,13 +64,20 @@ compile_error!(
 );
 
 mod context;
+mod development;
 mod env;
 mod error;
+#[cfg(feature = "files")]
+mod files;
 #[cfg(feature = "http3")]
 mod http3;
 mod limits;
 mod linger;
 mod listener;
+#[cfg(feature = "logging")]
+mod logging;
+#[cfg(feature = "middleware")]
+mod middleware;
 mod redirect;
 #[cfg(feature = "warded")]
 mod routes;
@@ -69,7 +91,15 @@ pub use axum;
 pub use warded;
 
 pub use error::Error;
+#[cfg(all(feature = "files", feature = "warded"))]
+pub use files::SinglePageApp;
+#[cfg(feature = "files")]
+pub use files::StaticFiles;
 pub use limits::Limits;
+#[cfg(feature = "logging")]
+pub use logging::init_logging;
+#[cfg(feature = "middleware")]
+pub use middleware::DefaultMiddleware;
 #[cfg(feature = "warded")]
 pub use routes::{Params, ParamsRejection, app};
 pub use server::{BoundServer, Server};

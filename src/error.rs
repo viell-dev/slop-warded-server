@@ -43,6 +43,15 @@ pub enum Error {
         /// What is wrong with its value.
         reason: String,
     },
+    /// The [development address](crate::Server::development) is not a loopback address.
+    #[error(
+        "the development address {address} must be a loopback address, such as 127.0.0.1:3000, \
+         because it has no TLS"
+    )]
+    Development {
+        /// The requested address.
+        address: SocketAddr,
+    },
     /// One of the [`Limits`](crate::Limits) has a value that nothing could be served with.
     #[error("the limit `{field}` is zero or too large")]
     Limit {

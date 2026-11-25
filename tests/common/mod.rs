@@ -104,6 +104,7 @@ pub fn server(authority: &Authority) -> Server {
 pub struct Running {
     pub https: SocketAddr,
     pub http: Option<SocketAddr>,
+    pub development: Option<SocketAddr>,
     pub task: JoinHandle<Result<(), Error>>,
     stop: Option<oneshot::Sender<()>>,
 }
@@ -118,6 +119,7 @@ impl Running {
         Self {
             https: bound.https_addr(),
             http: bound.http_addr(),
+            development: bound.development_addr(),
             stop: Some(stop),
             task: tokio::spawn(bound.serve_until(app, async {
                 let _ = stopped.await;
@@ -184,6 +186,18 @@ impl Client {
                 Version::HTTP_3 => Self::Http3(http3(address, authority).await?),
                 other => panic!("no client for {other:?}"),
             })
+        })
+        .await
+    }
+
+    /// HTTP/1.1 without TLS, as browsers use on the development address.
+    pub async fn plain(address: SocketAddr) -> Result<Self, BoxError> {
+        soon(async {
+            let stream = TcpStream::connect(address).await?;
+            let (send, connection) =
+                hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
+            tokio::spawn(connection.with_upgrades());
+            Ok(Self::Http1(send))
         })
         .await
     }
