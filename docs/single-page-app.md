@@ -18,10 +18,11 @@ routes, in this order:
 2. the built files;
 3. `index.html` for every other page that a browser opens, because the app has its own routes.
 
-The file services need two more features of `tower-http`:
+The file services need two more features of `tower-http`, and the checks at the end two crates:
 
 ```sh
 cargo add tower-http --features fs,set-header
+cargo add --dev http-body-util tempfile
 ```
 
 The whole application:
@@ -32,7 +33,7 @@ use axum::{
     body::Body,
     http::{HeaderValue, Request, StatusCode, header},
     response::Response,
-    routing::get as axum_get,
+    routing::{any, get as axum_get},
 };
 use http_body_util::BodyExt;
 use std::path::Path;
@@ -76,12 +77,16 @@ fn app(dist: &Path) -> Result<Router, DefinitionError> {
 
     // Browsers must ask whether this one changed, to find new names after an update.
     let revalidate = HeaderValue::from_static("no-cache");
+    // Caches must not give this page, or its absence, to a request that prefers something else.
+    let vary = HeaderValue::from_static("accept");
     let index = Router::new()
         .fallback_service(ServeFile::new(dist.join("index.html")))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             revalidate,
-        ));
+        ))
+        .layer(SetResponseHeaderLayer::appending(header::VARY, vary));
+    let not_found = any(|| async { (StatusCode::NOT_FOUND, [(header::VARY, "accept")]) });
 
     // Browsers prefer HTML when they open a page. Requests from scripts, and for scripts, styles
     // and images, take anything, so they choose the first offer.
@@ -89,7 +94,8 @@ fn app(dist: &Path) -> Result<Router, DefinitionError> {
     let routes = warded::Router::new()
         .route(under("/api"), api)
         .route(get_or_head().and(under("/assets")), assets)
-        .route(get_or_head().and(preferred.selected("text/html")?), index);
+        .route(get_or_head().and(preferred.selected("text/html")?), index)
+        .fallback(not_found);
     Ok(warded_server::app(routes))
 }
 
@@ -121,6 +127,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .body(Body::empty())?;
         let response = app.clone().oneshot(request).await?;
         assert_eq!(response.status(), status, "{uri}");
+        if uri.starts_with("/settings") {
+            assert_eq!(response.headers()[header::VARY], "accept", "{uri}");
+        }
         if uri.starts_with("/assets/") {
             let cached = response.headers().contains_key(header::CACHE_CONTROL);
             assert_eq!(cached, status == StatusCode::OK, "{uri}");

@@ -194,6 +194,6 @@ fn main() {
 
 An open WebSocket counts towards the [connection limit](./configuration.md#limits). It does not
 delay a shutdown: once all other requests have finished, it fails when its handler next uses it, and
-the client sees no close frame. To say goodbye properly, use
-[`serve_until`](./existing-axum.md#decide-when-to-stop) and tell the handlers, for example through a
-`tokio::sync::watch` channel, when you decide to stop.
+the client sees no close frame. A handler that waits for something else notices nothing until then.
+To say goodbye properly, use [`serve_until`](./existing-axum.md#decide-when-to-stop) and tell the
+handlers, for example through a `tokio::sync::watch` channel, when you decide to stop.

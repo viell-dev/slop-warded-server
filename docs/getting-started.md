@@ -113,7 +113,9 @@ If you have an Axum application, see [existing Axum applications](./existing-axu
 
 The examples on this site are complete programs that check themselves, so that they stay correct. In
 your project, put `app` in a module, its checks in tests, and `serve` in `main`. An example that
-needs more than its template has starts with the `cargo add` commands for it.
+needs more than its template has starts with the `cargo add` commands for it. The checks use
+`tower`, with its `util` feature, and `http-body-util`, which the `api` and `website` templates have
+for tests.
 
 ### Features
 
