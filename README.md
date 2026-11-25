@@ -88,8 +88,10 @@ Warded routes. `warded_server::app` turns Warded routes into an `axum::Router`, 
 - **Redirects from HTTP**, or the application itself on the cleartext listener.
 - **Certificate reload** for new connections of all protocols, with `SIGHUP` on Unix or
   `Tls::reload`.
-- **Graceful shutdown** on Ctrl+C or `SIGTERM`: requests in progress finish within a grace period.
-- **Limits** on connections, concurrent requests, head size and stalled clients.
+- **Graceful shutdown** on Ctrl+C or `SIGTERM`: requests in progress finish within a grace period,
+  which a second signal ends.
+- **Limits** on connections, concurrent requests and head size, and timeouts for stalled handshakes
+  and request heads.
 
 What it leaves to you, and what does not work yet, is in [limits](./docs/limits.md).
 

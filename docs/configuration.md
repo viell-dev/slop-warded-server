@@ -57,7 +57,9 @@ chromium --user-data-dir="$(mktemp -d)" --origin-to-force-quic-on=localhost:8443
 ## Stopping
 
 Ctrl+C or `SIGTERM` stops the server from accepting connections. Requests in progress have 30 seconds
-to finish before their connections are closed. Idle connections are told to close at once.
+to finish before their connections are closed, and a second signal closes them at once. Idle
+connections are told to close right away. Open WebSockets do not delay the end, and are closed with
+the last request, without a close frame.
 
 Set another period with `Server::grace_period`, and make a service manager wait longer than that
 before it kills the process.

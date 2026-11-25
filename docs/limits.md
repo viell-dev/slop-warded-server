@@ -17,8 +17,8 @@ release, 0.0.8, has these open defects:
 
 The server works around two others. It limits decoded heads
 ([h3#379](https://github.com/hyperium/h3/issues/379)), and it contains a panic that a malformed body
-causes ([h3#386](https://github.com/hyperium/h3/issues/386)). Containing it needs unwinding, so the
-`http3` feature refuses to compile with `panic = "abort"`.
+causes ([h3#386](https://github.com/hyperium/h3/issues/386)), although Rust still reports that panic.
+Containing it needs unwinding, so the `http3` feature refuses to compile with `panic = "abort"`.
 
 Set `WARDED_HTTP3=off` to serve without it, or leave out the `http3` feature. WebSockets,
 WebTransport and other uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never
@@ -43,7 +43,14 @@ accepted.
 - **More than one certificate or HTTPS address** in one server.
 - **WebSockets over HTTP/2.** They work over HTTP/1.1.
 
+- **HEAD with compression.** Layers around the application see the response to HEAD after its body
+  is gone, so `CompressionLayer` leaves it alone, unlike the response to GET.
+
 ## Connections
+
+Nothing limits how long a client takes to send a request body or to read a response, as long as its
+connection is alive. Each such client holds a connection.
+
 
 The default [`Limits`](../src/limits.rs) are not tuned for any particular machine. An HTTP/2
 connection stays open as long as its client answers pings, so idle clients use up the connection
