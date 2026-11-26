@@ -58,10 +58,14 @@ function start() {
 async function stop(server) {
   const began = Date.now();
   server.child.kill("SIGTERM");
+  let timer;
   const stopped = await Promise.race([
     server.exited.then(() => true),
-    new Promise((done) => setTimeout(done, STOP_LIMIT, false)),
+    new Promise((done) => {
+      timer = setTimeout(done, STOP_LIMIT, false);
+    }),
   ]);
+  clearTimeout(timer);
   if (!stopped) {
     server.child.kill("SIGKILL");
     throw new Error(`the server did not stop within ${STOP_LIMIT} ms:\n${server.log}`);
@@ -162,7 +166,7 @@ test("an address without a page gets the page for it", async () => {
   await page.waitForURL(server.url);
 });
 
-test("a page reloads by itself when the server restarts", async () => {
+test("a page reloads by itself when the server restarts", async (t) => {
   const listening = page.waitForResponse((response) =>
     response.url().endsWith("/_tower-livereload/event-stream"),
   );
@@ -172,9 +176,9 @@ test("a page reloads by itself when the server restarts", async () => {
     window.beforeTheRestart = true;
   });
 
-  const took = await stop(server);
   // On Unix this is a graceful shutdown, which the open stream must not hold up.
-  assert.ok(took < STOP_LIMIT, `stopping took ${took} ms`);
+  const took = await stop(server);
+  t.diagnostic(`stopping with the page open took ${took} ms`);
   server = await start();
   await page.waitForFunction(() => window.beforeTheRestart === undefined, null, {
     timeout: 30_000,
