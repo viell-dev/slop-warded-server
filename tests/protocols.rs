@@ -909,7 +909,7 @@ fn frame_as(headers: &mut HeaderMap, case: &str) {
 }
 
 #[tokio::test]
-async fn the_length_of_the_content_is_its_only_framing() {
+async fn responses_are_framed_by_their_true_length_or_their_encoding() {
     use std::convert::Infallible;
 
     let authority = Authority::new();
@@ -951,6 +951,9 @@ async fn the_length_of_the_content_is_its_only_framing() {
         ["two", "same", "invalid", "chunked", "both"].map(|case| format!("/stream/{case}")),
     );
     for path in &paths {
+        // Over HTTP/1.1 the application's Transfer-Encoding frames the content, and Hyper sends none
+        // for HEAD.
+        let encoded = path.ends_with("/chunked") || path.ends_with("/both");
         for method in ["GET", "HEAD"] {
             let length = match (path.as_str(), method) {
                 ("/stream/two" | "/stream/invalid" | "/stream/chunked", _) => None,
@@ -962,6 +965,11 @@ async fn the_length_of_the_content_is_its_only_framing() {
             };
             let content = if method == "GET" { "hello" } else { "" };
             for version in VERSIONS {
+                let (length, encoding) = match version {
+                    Version::HTTP_11 if encoded && method == "GET" => (None, Some("chunked")),
+                    Version::HTTP_11 if encoded => (None, None),
+                    _ => (length, None),
+                };
                 let mut client = Client::connect(version, running.https, &authority)
                     .await
                     .unwrap();
@@ -972,10 +980,11 @@ async fn the_length_of_the_content_is_its_only_framing() {
                 let headers = response.headers().clone();
                 let lengths: Vec<_> = headers.get_all(header::CONTENT_LENGTH).iter().collect();
                 assert_eq!(lengths, Vec::from_iter(length), "{case}");
-                assert!(
-                    !headers.contains_key(header::TRANSFER_ENCODING) || length.is_none(),
-                    "{case}"
-                );
+                if version != Version::HTTP_11 || encoding.is_some() {
+                    let encodings: Vec<_> =
+                        headers.get_all(header::TRANSFER_ENCODING).iter().collect();
+                    assert_eq!(encodings, Vec::from_iter(encoding), "{case}");
+                }
                 assert_eq!(text(response).await.unwrap(), content, "{case}");
             }
             // What goes over the wire, which a client could otherwise tidy up.
@@ -985,18 +994,174 @@ async fn the_length_of_the_content_is_its_only_framing() {
             let (head, body) = response.split_once("\r\n\r\n").unwrap();
             let head = head.to_ascii_lowercase();
             let fields = |name: &str| head.lines().filter(|line| line.starts_with(name)).count();
-            let expected = (usize::from(length.is_some()), usize::from(length.is_none()));
             let framing = (fields("content-length:"), fields("transfer-encoding:"));
-            if method == "GET" {
-                assert_eq!(framing, expected, "{request:?}: {response}");
-                assert!(
-                    body == content || length.is_none(),
-                    "{request:?}: {response}"
-                );
+            let length = length.filter(|_| !encoded);
+            let expected = match method {
+                "GET" => (usize::from(length.is_some()), usize::from(length.is_none())),
+                _ => (usize::from(length.is_some()), 0),
+            };
+            assert_eq!(framing, expected, "{request:?}: {response}");
+            if method == "GET" && length.is_some() {
+                assert_eq!(body, content, "{request:?}");
+            } else if method == "GET" {
+                assert_eq!(body, "5\r\nhello\r\n0\r\n\r\n", "{request:?}");
             } else {
-                assert_eq!(framing.0, expected.0, "{request:?}: {response}");
                 assert_eq!(body, "", "{request:?}");
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_applications_transfer_encoding_frames_http1_content() {
+    use http_body_util::Full;
+    use std::convert::Infallible;
+
+    let authority = Authority::new();
+    let app = tower::service_fn(|request: Request| async move {
+        let response = match request.uri().path() {
+            // Content of known length, with trailers, which HTTP/1.1 sends only in chunks.
+            "/trailers" => {
+                let mut trailers = HeaderMap::new();
+                trailers.insert("x-sum", HeaderValue::from_static("1"));
+                let body = Full::new(Bytes::from_static(b"hello"))
+                    .with_trailers(async { Some(Ok::<_, Infallible>(trailers)) });
+                let mut response = Response::new(Body::new(body));
+                let headers = response.headers_mut();
+                headers.insert(header::TRAILER, HeaderValue::from_static("x-sum"));
+                headers.insert(
+                    header::TRANSFER_ENCODING,
+                    HeaderValue::from_static("chunked"),
+                );
+                response
+            }
+            // Content in another transfer coding; the test does not decode it.
+            "/coded" => {
+                let mut response = Response::new(Body::from("hello"));
+                let coding = HeaderValue::from_static("gzip, chunked");
+                response
+                    .headers_mut()
+                    .insert(header::TRANSFER_ENCODING, coding);
+                response
+            }
+            _ => unreachable!(),
+        };
+        Ok::<_, Infallible>(response)
+    });
+    let app = axum::Router::new().fallback_service(app);
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, app);
+    for version in VERSIONS {
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        let mut request = get("/trailers");
+        let te = HeaderValue::from_static("trailers");
+        request.headers_mut().insert(header::TE, te);
+        let response = client.send(request).await.unwrap();
+        let headers = response.headers().clone();
+        let (length, encoding) = match version {
+            Version::HTTP_11 => (None, Some("chunked")),
+            _ => (Some("5"), None),
+        };
+        let lengths: Vec<_> = headers.get_all(header::CONTENT_LENGTH).iter().collect();
+        assert_eq!(lengths, Vec::from_iter(length), "{version:?}");
+        let encodings: Vec<_> = headers.get_all(header::TRANSFER_ENCODING).iter().collect();
+        assert_eq!(encodings, Vec::from_iter(encoding), "{version:?}");
+        let collected = common::soon(response.into_body().collect()).await.unwrap();
+        let trailers = collected.trailers().cloned().expect("trailers");
+        assert_eq!(trailers["x-sum"], "1", "{version:?}");
+        assert_eq!(collected.to_bytes(), "hello", "{version:?}");
+    }
+    let request = "GET /coded HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    let response = common::cleartext(running.http.unwrap(), request).await;
+    let (head, body) = response.split_once("\r\n\r\n").unwrap();
+    assert!(
+        head.contains("\r\ntransfer-encoding: gzip, chunked\r\n"),
+        "{head}"
+    );
+    assert!(!head.contains("content-length"), "{head}");
+    assert_eq!(body, "5\r\nhello\r\n0\r\n\r\n");
+}
+
+#[tokio::test]
+async fn responses_without_content_have_no_framing() {
+    use std::convert::Infallible;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let app = tower::service_fn(|request: Request| async move {
+        let field = |name| request.headers().get(name).cloned();
+        let (status, framing) = match field("x-case").unwrap().as_bytes() {
+            b"length" => (StatusCode::OK, (header::CONTENT_LENGTH, "0")),
+            b"chunked" => (StatusCode::OK, (header::TRANSFER_ENCODING, "chunked")),
+            b"switch" => (
+                StatusCode::SWITCHING_PROTOCOLS,
+                (header::CONTENT_LENGTH, "6"),
+            ),
+            b"switch-right" => (
+                StatusCode::SWITCHING_PROTOCOLS,
+                (header::CONTENT_LENGTH, "5"),
+            ),
+            _ => unreachable!(),
+        };
+        let mut response = Response::new(Body::from("hello"));
+        *response.status_mut() = status;
+        let headers = response.headers_mut();
+        headers.insert(framing.0, HeaderValue::from_static(framing.1));
+        if status == StatusCode::SWITCHING_PROTOCOLS {
+            headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
+            headers.insert(header::UPGRADE, HeaderValue::from_static("example"));
+        }
+        Ok::<_, Infallible>(response)
+    });
+    let authority = Authority::new();
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, axum::Router::new().fallback_service(app));
+    for (request, status) in [
+        // A tunnel begins after the head of a successful response to CONNECT.
+        (
+            "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\nX-Case: length\r\n",
+            "200",
+        ),
+        (
+            "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\nX-Case: chunked\r\n",
+            "200",
+        ),
+        // An informational response ends with its head.
+        (
+            "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: upgrade\r\nUpgrade: example\r\n\
+             X-Case: switch\r\n",
+            "101",
+        ),
+        (
+            "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: upgrade\r\nUpgrade: example\r\n\
+             X-Case: switch-right\r\n",
+            "101",
+        ),
+    ] {
+        let mut stream = tokio::net::TcpStream::connect(running.http.unwrap())
+            .await
+            .unwrap();
+        stream
+            .write_all(format!("{request}\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut head = Vec::new();
+        common::soon(async {
+            while !head.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).await.unwrap();
+                head.push(byte[0]);
+            }
+        })
+        .await;
+        let head = String::from_utf8(head).unwrap();
+        assert!(
+            head.starts_with(&format!("HTTP/1.1 {status} ")),
+            "{request:?}: {head}"
+        );
+        for name in ["content-length", "transfer-encoding"] {
+            assert!(!head.contains(name), "{request:?}: {head}");
         }
     }
 }

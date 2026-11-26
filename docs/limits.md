@@ -55,9 +55,10 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 - **Whitespace in trailers.** In the trailers of an HTTP/2 or HTTP/3 request, a field value can
   begin or end with a space or a tab, which HTTP/1.1 removes, and which the server refuses in heads.
 - **A handler's own `Content-Length` for HEAD.** Where the server knows the length of the content,
-  it replaces one that a handler declared, and logs a warning. For HEAD, `any(handler)` has taken
-  the content off, so the handler's length goes out as it is; `handler.into_service()` keeps the
-  content, as in [the response to HEAD](./middleware.md#the-response-to-head).
+  it replaces one that a handler declared, and logs a warning. A response to HEAD without content
+  keeps the length that the application declared, which the server cannot check: `any(handler)`
+  takes the content off, and `handler.into_service()` keeps it, as in [the response to
+  HEAD](./middleware.md#the-response-to-head).
 - **gRPC** has not been tried.
 - **`If-Range` for files.** `StaticFiles`, `SinglePageApp` and `ServeDir` come from tower-http 0.7.1,
   which answers a range even when `If-Range` names an older version of the file, so a resumed

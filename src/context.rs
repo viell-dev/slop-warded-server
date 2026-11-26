@@ -65,11 +65,7 @@ where
     }
 
     fn call(&mut self, request: Request<B>) -> Self::Future {
-        let finish: Finish = match *request.method() {
-            Method::HEAD => finish_head,
-            Method::CONNECT => finish_connect,
-            _ => finish,
-        };
+        let finish = finisher(request.method(), request.version());
         let (mut parts, body) = request.into_parts();
         // Before the application and its routes. The HTTP/3 bridge refuses such heads itself, as
         // stream errors.
@@ -100,13 +96,30 @@ where
     }
 }
 
-/// Give a response the length of its content, and no content that its status rules out (RFC 9110
-/// sections 15.3.5, 15.3.6 and 15.4.5).
+/// How to finish the response to a request: by its method, and whether HTTP/1 carries it.
+fn finisher(method: &Method, version: Version) -> Finish {
+    let http1 = matches!(
+        version,
+        Version::HTTP_09 | Version::HTTP_10 | Version::HTTP_11
+    );
+    match (method, http1) {
+        (&Method::HEAD, true) => finish_head::<true>,
+        (&Method::HEAD, false) => finish_head::<false>,
+        (&Method::CONNECT, true) => finish_connect::<true>,
+        (&Method::CONNECT, false) => finish_connect::<false>,
+        (_, true) => finish::<true>,
+        (_, false) => finish::<false>,
+    }
+}
+
+/// Give a response the framing of its content, and no content or framing that its status rules
+/// out (RFC 9110 sections 8.6, 15.2, 15.3.5, 15.3.6 and 15.4.5). `HTTP1` says whether HTTP/1
+/// carries it.
 ///
 /// Of the protocol implementations, only Hyper's HTTP/1.1 does most of this. It sends a length that
 /// the application declares for content of known length, which it checks only in debug builds, by
 /// panicking.
-fn finish(mut response: Response) -> Response {
+fn finish<const HTTP1: bool>(mut response: Response) -> Response {
     match response.status() {
         StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED => {
             *response.body_mut() = Body::empty();
@@ -115,39 +128,76 @@ fn finish(mut response: Response) -> Response {
         }
         StatusCode::RESET_CONTENT => {
             *response.body_mut() = Body::empty();
-            frame_by_length(response.headers_mut(), 0);
+            let headers = response.headers_mut();
+            headers.remove(TRANSFER_ENCODING);
+            headers.insert(CONTENT_LENGTH, 0.into());
         }
-        status if status.is_informational() => {}
-        _ => match response.body().size_hint().exact() {
-            Some(length) => declare_length(response.headers_mut(), length),
-            None => keep_declared_length(response.headers_mut()),
-        },
+        status if status.is_informational() => without_content(&mut response),
+        _ => {
+            let length = response.body().size_hint().exact();
+            frame::<HTTP1>(response.headers_mut(), length);
+        }
     }
     response
 }
 
-/// Take the content off the response to a HEAD request, and keep what is known of its length.
+/// Take the content off the response to a HEAD request, and keep what is known of its framing.
 ///
 /// Axum does for its handlers, but the application can be any service.
-fn finish_head(mut response: Response) -> Response {
-    match response.body().size_hint().exact() {
+fn finish_head<const HTTP1: bool>(mut response: Response) -> Response {
+    let status = response.status();
+    if status.is_informational()
+        || matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED)
+    {
+        return finish::<HTTP1>(response);
+    }
+    let length = match response.body().size_hint().exact() {
         // Taken off already, so the application's length is that of the content to GET.
-        None | Some(0) => keep_declared_length(response.headers_mut()),
-        Some(length) => declare_length(response.headers_mut(), length),
-    }
+        None | Some(0) => None,
+        length => length,
+    };
+    frame::<HTTP1>(response.headers_mut(), length);
     *response.body_mut() = Body::empty();
-    if let StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED = response.status() {
-        response.headers_mut().remove(CONTENT_LENGTH);
-    }
     response
 }
 
-/// A successful response to CONNECT begins a tunnel, and has neither content nor a length.
-fn finish_connect(response: Response) -> Response {
+/// A successful response to CONNECT begins a tunnel, and has neither content nor framing (RFC 9110
+/// section 8.6, RFC 9112 section 6.1). Hyper closes the connection without a response when it has.
+fn finish_connect<const HTTP1: bool>(mut response: Response) -> Response {
     if response.status().is_success() {
+        without_content(&mut response);
         response
     } else {
-        finish(response)
+        finish::<HTTP1>(response)
+    }
+}
+
+/// Take off the content of a response that can have none, and the fields that would frame it.
+///
+/// Hyper sends a `Content-Length` of an informational response, and panics in debug builds when it
+/// is not the length of the content.
+fn without_content(response: &mut Response) {
+    *response.body_mut() = Body::empty();
+    let headers = response.headers_mut();
+    headers.remove(CONTENT_LENGTH);
+    headers.remove(TRANSFER_ENCODING);
+}
+
+/// Frame content of this length, or of an unknown one.
+///
+/// Over HTTP/1, a `Transfer-Encoding` of the application's is its choice of framing, which takes
+/// precedence over a length (RFC 9112 section 6.3). Hyper then sends the content in chunks, with
+/// its trailers and any other coding. Without the `Content-Length` that Axum's handlers add beside
+/// it, Hyper does not close the connection. HTTP/2 and HTTP/3 have no `Transfer-Encoding`.
+fn frame<const HTTP1: bool>(headers: &mut HeaderMap, length: Option<u64>) {
+    if HTTP1 && headers.contains_key(TRANSFER_ENCODING) {
+        headers.remove(CONTENT_LENGTH);
+        return;
+    }
+    headers.remove(TRANSFER_ENCODING);
+    match length {
+        Some(length) => declare_length(headers, length),
+        None => keep_declared_length(headers),
     }
 }
 
@@ -164,7 +214,7 @@ fn declare_length(headers: &mut HeaderMap, length: u64) {
             "the application declared a Content-Length that its content does not have"
         );
     }
-    frame_by_length(headers, length);
+    headers.insert(CONTENT_LENGTH, length.into());
 }
 
 /// Keep the length that the application declared for content of unknown length, as one field, if
@@ -172,7 +222,9 @@ fn declare_length(headers: &mut HeaderMap, length: u64) {
 fn keep_declared_length(headers: &mut HeaderMap) {
     match fields::declared_length(headers) {
         Ok(None) => {}
-        Ok(Some(length)) => frame_by_length(headers, length),
+        Ok(Some(length)) => {
+            headers.insert(CONTENT_LENGTH, length.into());
+        }
         Err(_) => {
             let declared: Vec<_> = headers.get_all(CONTENT_LENGTH).iter().collect();
             tracing::warn!(
@@ -182,16 +234,6 @@ fn keep_declared_length(headers: &mut HeaderMap) {
             headers.remove(CONTENT_LENGTH);
         }
     }
-}
-
-/// Make a length the response's only framing.
-///
-/// A `Transfer-Encoding` goes, which is about an HTTP/1.1 connection: RFC 9112 section 6.1 rules out
-/// both together, and HTTP/2 and HTTP/3 have none. Hyper closes an HTTP/1.1 connection without a
-/// response when the application declares both.
-fn frame_by_length(headers: &mut HeaderMap, length: u64) {
-    headers.remove(TRANSFER_ENCODING);
-    headers.insert(CONTENT_LENGTH, length.into());
 }
 
 /// An IPv4 client of a dual-stack listener has an IPv4 address, not an IPv4-mapped IPv6 one.

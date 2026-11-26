@@ -196,11 +196,16 @@ the application and Warded see a well-formed head on every protocol.
   HTTP/2 only in part, and h3 not at all.
 - **A known length replaces the application's.** Hyper trusts a `Content-Length` beside content of
   known length: it sends a false one in release builds and panics in debug builds, and it closes
-  the connection when `Transfer-Encoding` comes too. So the length of the content is the only
-  framing, and the log warns when the application declared another. For content of unknown length,
-  a valid declared length stays, and each protocol fails a response that does not match it, so that
-  a streamed response can still declare its length. A 500 in place of a response whose length is
+  the connection when `Transfer-Encoding` comes too. So the length of the content is the framing,
+  and the log warns when the application declared another. For content of unknown length, a valid
+  declared length stays, and each protocol fails a response that does not match it, so that a
+  streamed response can still declare its length. A 500 in place of a response whose length is
   wrong would fail a request whose content is fine.
+- **Except for an HTTP/1 `Transfer-Encoding`**, which is the application's choice of framing and
+  takes precedence over a length (RFC 9112 section 6.3): only chunks carry trailers, and another
+  transfer coding would be lost. Its `Content-Length` goes instead, which Axum's handlers add.
+  `finish` therefore knows whether HTTP/1 carries the response. HTTP/2 and HTTP/3 have no
+  `Transfer-Encoding`, so their known length applies.
 - **Closing HTTP/3 lingers while data flows.** Closing a QUIC connection discards what Quinn still has
   to send or repeat, and h3 does not report when a response has been received. A fixed delay loses
   responses on slow links.
