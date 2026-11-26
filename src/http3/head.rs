@@ -31,7 +31,7 @@ pub(super) fn content_length(headers: &HeaderMap) -> Result<Option<u64>, &'stati
     if headers.get_all(TE).iter().any(|value| value != "trailers") {
         return Err("the request head has a TE field other than `trailers`");
     }
-    crate::head::declared_length(headers)
+    crate::fields::declared_length(headers)
 }
 
 /// Make the application's response one that HTTP/3 can carry.

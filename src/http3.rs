@@ -363,8 +363,8 @@ async fn respond(
     let (send, mut receive) = stream.split();
     let responder = Responder::new(send);
     let (mut parts, ()) = head.into_parts();
-    let checked =
-        crate::head::check(&mut parts).and_then(|()| head::content_length(&parts.headers));
+    let checked = crate::fields::check_request(&mut parts)
+        .and_then(|()| head::content_length(&parts.headers));
     let body = match checked {
         Ok(length) => RequestBody::new(receive, length),
         Err(malformed) => {

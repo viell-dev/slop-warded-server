@@ -164,7 +164,7 @@ would not change the second point. It also avoids a panic of `h3-quinn` when a s
 
 Hyper and h3 check request heads in part, and differently, so a request that one protocol refuses
 or repairs reaches the application unchanged over another, and a route can match it there only.
-`src/head.rs` holds the rules that they leave to the server. `Connection` in `src/context.rs`
+`src/fields.rs` holds the rules that they leave to the server. `Connection` in `src/context.rs`
 applies them where a TCP request enters the application, and the HTTP/3 bridge before that, so that
 the application and Warded see a well-formed head on every protocol.
 
@@ -176,7 +176,7 @@ the application and Warded see a well-formed head on every protocol.
   already refuses other malformed HTTP/3 heads with `H3_MESSAGE_ERROR`.
 - **One host for each request.** Neither Hyper nor h2 checks `Host`, and h3 compares only the
   first field with `:authority`, so a route that matches on the host could see two, or one that
-  the URI contradicts. `Authority` from `http` checks the characters of a host; `src/head.rs` adds
+  the URI contradicts. `Authority` from `http` checks the characters of a host; `src/fields.rs` adds
   what it lets through: user information, a port that is not a number, and brackets that hold no
   IP address.
 - **An HTTP/1 target's host replaces the field's** rather than leaving both. RFC 9112 section

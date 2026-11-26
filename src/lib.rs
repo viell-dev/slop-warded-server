@@ -94,9 +94,9 @@ mod context;
 mod development;
 mod env;
 mod error;
+mod fields;
 #[cfg(feature = "files")]
 mod files;
-mod head;
 #[cfg(feature = "http3")]
 mod http3;
 mod limits;

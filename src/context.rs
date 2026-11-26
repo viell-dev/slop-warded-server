@@ -1,6 +1,6 @@
 //! What every listener does to requests before the application sees them, and to its responses.
 
-use crate::head;
+use crate::fields;
 use axum::{
     body::{Body, Bytes, HttpBody},
     extract::ConnectInfo,
@@ -74,7 +74,7 @@ where
         // Before the application and its routes. The HTTP/3 bridge refuses such heads itself, as
         // stream errors.
         if parts.version != Version::HTTP_3
-            && let Err(reason) = head::check(&mut parts)
+            && let Err(reason) = fields::check_request(&mut parts)
         {
             tracing::debug!(reason, "a malformed request was refused");
             let refusal = (
@@ -155,7 +155,8 @@ fn finish_connect(response: Response) -> Response {
 ///
 /// Hyper would send the application's, which the client then waits for or cuts the content at.
 fn declare_length(headers: &mut HeaderMap, length: u64) {
-    if headers.contains_key(CONTENT_LENGTH) && head::declared_length(headers) != Ok(Some(length)) {
+    if headers.contains_key(CONTENT_LENGTH) && fields::declared_length(headers) != Ok(Some(length))
+    {
         let declared: Vec<_> = headers.get_all(CONTENT_LENGTH).iter().collect();
         tracing::warn!(
             ?declared,
@@ -169,7 +170,7 @@ fn declare_length(headers: &mut HeaderMap, length: u64) {
 /// Keep the length that the application declared for content of unknown length, as one field, if
 /// it is valid. The protocols check the content against it as it goes out.
 fn keep_declared_length(headers: &mut HeaderMap) {
-    match head::declared_length(headers) {
+    match fields::declared_length(headers) {
         Ok(None) => {}
         Ok(Some(length)) => frame_by_length(headers, length),
         Err(_) => {
