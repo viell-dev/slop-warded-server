@@ -30,9 +30,9 @@ It asks for a template and a project name, and makes a directory with that name:
 
 | Template            | Choose it for                                        | Guide                        |
 | ------------------- | ---------------------------------------------------- | ---------------------------- |
-| `templates/minimal` | Learning, or adding only what you want               | this page                    |
-| `templates/api`     | A JSON API, also as the back end of an app           | [JSON API](./json-api.md)    |
-| `templates/website` | HTML pages from the server, with a form and styles   | [Website](./website.md)      |
+| `templates/minimal` | Learning, or adding only what you want               | [Minimal](./template-minimal.md) |
+| `templates/api`     | A JSON API, also as the back end of an app            | [API](./template-api.md) |
+| `templates/website` | HTML pages from the server, with a form and styles   | [Website](./template-website.md) |
 
 To skip the questions, name both:
 
@@ -53,18 +53,9 @@ The first build takes a minute or so. Then the log says where to go:
 INFO warded_server::server: open http://127.0.0.1:3000/ in a browser
 ```
 
-Open that address. It is the [development address](./configuration.md#the-development-address):
-plain HTTP for this computer alone, so there is no certificate to accept. Browsers use HTTP/1.1
-there, and Warded's `secured()` condition does not hold. HTML pages reload by themselves when the
-server starts again. The `api` template lists its endpoints at `/`.
-
-Stop the server with Ctrl+C, twice to do it at once. To restart it after each change, install
-[bacon](https://dystroy.org/bacon/) once, and run it in place of `cargo run`:
-
-```sh
-cargo install --locked bacon
-bacon run-long
-```
+Open that [development address](./configuration.md#the-development-address) in a browser.
+It uses plain HTTP on this computer alone. Follow the template's guide above for what you should
+see and how to make your first change. Stop the server with Ctrl+C.
 
 HTTPS runs at the same time, at `https://localhost:8443`, for HTTP/2 and HTTP/3. It made a
 certificate that nothing trusts, so a browser warns about it and curl needs `--insecure`:
@@ -80,21 +71,9 @@ The last one needs a curl with HTTP/3, which `curl --version` lists among its fe
 
 ## The code
 
-The minimal template's `src/main.rs` is a whole application:
-
-<<< ../templates/minimal/src/main.rs
-
-- **`Router::new().route(condition, handler)`** adds a route. Routes are tried in order, and the
-  first whose conditions all hold gets the request. [Routes and requests](./requests.md) introduces
-  them.
-- **`any(home)`** turns an Axum handler into a destination. Warded already selects on the method, so
-  the handler takes any.
-- **`warded_server::app(routes)`** makes an `axum::Router` of them, which accepts
-  [middleware](./middleware.md).
-- **`init_logging()`** prints what the server logs, such as the address to open.
-- **`Server::from_env()`** reads its settings from [environment variables](./configuration.md), and
-  **`serve`** runs until the process is asked to stop. The template's `.cargo/config.toml` sets the
-  development address for `cargo run`.
+The [minimal template](./template-minimal.md#what-is-where) shows the whole application in one
+file. [Routes and requests](./requests.md) explains how the router chooses a handler, and the
+[glossary](./glossary.md) introduces the terms the examples use.
 
 ## Add it to a project
 

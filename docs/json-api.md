@@ -4,41 +4,9 @@ description: "Build a JSON API: resources, errors, query parameters, authenticat
 
 # A JSON API
 
-Start from the `api` template:
-
-```sh
-cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.2 --name my-api
-cd my-api
-cargo run
-```
-
-Open the address that the log names, `http://127.0.0.1:3000/`, for a list of the endpoints. Try
-them from another terminal:
-
-```sh
-curl --json '{"text": "milk"}' http://127.0.0.1:3000/notes
-curl http://127.0.0.1:3000/notes/1
-```
-
-That is the [development address](./configuration.md#the-development-address), for this computer
-alone. HTTPS, with HTTP/2 and HTTP/3, answers at the same time, with a certificate that nothing
-trusts: `curl --insecure https://localhost:8443/notes`.
-
-## What you get
-
-- `src/main.rs`: starts the server. You seldom need to change it.
-- `src/routes.rs`: the routes and the middleware, with their tests in `src/routes/tests.rs`.
-- `src/notes.rs`: an example resource, in memory. Replace it with yours.
-- `src/problem.rs`: errors as JSON.
-
-The routes are in one place, with the method as a condition. `DefaultMiddleware` logs each
-request, compresses responses, and answers a panic with a JSON error:
-
-<<< ../templates/api/src/routes.rs
-
-A resource module holds its types and handlers:
-
-<<< ../templates/api/src/notes.rs
+The [API template guide](./template-api.md) starts a project and walks through changing it.
+Use the examples here when you are ready to handle errors, add a database or take input from
+query parameters. See [Middleware](./middleware.md) for logging and compression.
 
 ## Errors
 

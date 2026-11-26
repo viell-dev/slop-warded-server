@@ -16,7 +16,7 @@ JavaScript and calls the API.
 | A built site with no API | A static host or CDN | It can handle certificates and caching and serve files close to visitors. |
 | A built site and an API in another language | That API's server, or Caddy or nginx | The build consists of ordinary files. Your API can keep its current runtime. |
 | A built site and a Rust API | Warded Server for local or private trials | Run the build and API on one origin and deploy them together. |
-| Nuxt, SvelteKit or Next.js with server-side rendering | A supported JavaScript runtime such as Node.js, behind a proxy | The framework needs to run JavaScript to render pages for requests. |
+| Nuxt, SvelteKit or Next.js with [server-side rendering][vite-ssr] | A supported JavaScript runtime such as Node.js, behind a proxy | The framework needs to run JavaScript to render pages for requests. |
 | Interactive pages rendered by Rust | [Leptos](https://book.leptos.dev/) | Rust renders pages on the server and WebAssembly can make them interactive in the browser. |
 
 ## What you get with a Rust API
@@ -44,10 +44,11 @@ tested here.
 
 [caddy-protocols]: https://caddyserver.com/docs/caddyfile/options#protocols
 [caddy-https]: https://caddyserver.com/docs/automatic-https
+[vite-ssr]: https://vite.dev/guide/ssr
 
 ## The server
 
-Start from the [API template](./json-api.md), build the app into a directory, and give both to
+Start from the [API template](./template-api.md), build the app into a directory, and give both to
 `SinglePageApp`. It answers, in this order:
 
 1. below the API's prefix, with the API, which answers its own 404s;
@@ -130,10 +131,18 @@ The fourth step is limited to requests that prefer HTML. Without that, a wrong a
 code gets `index.html` with a 200, which is hard to find. Programs such as curl, which take
 anything, get a 404 too, unless they send `Accept: text/html`.
 
-`app` goes into `src/routes.rs`, and `main` calls it with the directory of the build. The checks in
-the `main` above belong in a test. To run the listing as it is, save it as `examples/spa.rs` and use
-`cargo run --example spa`. Add `DefaultMiddleware` to what `into_router` returns, as the API
-template does, for logging and compression.
+To run the checks as written, save the listing as `examples/spa.rs` and use
+`cargo run --example spa`. To serve your build with the template's API, put its routes under
+`/api` (for example, `/notes` becomes `/api/notes`). Update the endpoint list and the tests to
+match. In `src/main.rs`, wrap the result of `routes::app` before passing it to `serve`:
+
+```text
+let app = warded_server::SinglePageApp::new("dist").api("/api", app).into_router();
+```
+
+Use the directory of your build in place of `dist`. To apply logging and compression to both
+the files and the API, move the template's `DefaultMiddleware` to the combined router returned
+by `into_router`.
 
 For build tools that put the files with generated names elsewhere, name that directory with
 `assets`, as in `SinglePageApp::new("dist").assets("static")`. Its HTML files get `no-cache`, in
@@ -170,6 +179,6 @@ build with `trunk build --release --public-url /assets/` and move everything exc
 
 ## Frameworks that render on the server
 
-Leptos and Dioxus applications are Axum routers, so they can be served like [any other Axum
-application](./existing-axum.md). That has not been tested with this server. Next.js, SvelteKit,
-Nuxt and others need their own JavaScript server; run that behind a proxy instead.
+If your Rust framework gives you an Axum router, see [Existing Axum
+applications](./existing-axum.md). See [tested environments](./limits.md#tested-environments)
+for framework coverage.

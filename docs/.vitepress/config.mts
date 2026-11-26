@@ -46,6 +46,12 @@ type Item = { text: string; link: string };
 const start: Item[] = [
   { text: "Getting started", link: "/getting-started" },
   { text: "Routes and requests", link: "/requests" },
+  { text: "Glossary", link: "/glossary" },
+];
+const templates: Item[] = [
+  { text: "Minimal", link: "/template-minimal" },
+  { text: "API", link: "/template-api" },
+  { text: "Website", link: "/template-website" },
 ];
 const projects: Item[] = [
   { text: "A JSON API", link: "/json-api" },
@@ -100,7 +106,10 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Guide", items: [...start, ...guides] },
-      { text: "Projects", items: projects },
+      {
+        text: "Projects",
+        items: [{ text: "Templates", items: templates }, { text: "Task guides", items: projects }],
+      },
       { text: "Running it", items: operation },
       { text: "Help", items: help },
       { text: "API reference", link: api },
@@ -108,6 +117,7 @@ export default defineConfig({
     ],
     sidebar: [
       { text: "Start here", items: start },
+      { text: "Templates", items: templates },
       { text: "Projects", items: projects },
       { text: "Guides", items: guides },
       { text: "Running it", items: operation },

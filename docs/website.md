@@ -4,56 +4,19 @@ description: "Build a website with pages rendered on the server, a form, static 
 
 # A website
 
-Start from the `website` template:
+The [website template guide](./template-website.md) walks through starting a project and making
+your first changes. This page covers static files, forms and languages for sites that render HTML
+on the server. For JavaScript apps that render in the browser, see [single-page
+apps](./single-page-app.md).
 
-```sh
-cargo generate viell-dev/slop-warded-server templates/website --tag 0.1.0-alpha.2 --name my-site
-cd my-site
-cargo run
-```
-
-Open the address that the log names, `http://127.0.0.1:3000/`. It is the [development
-address](./configuration.md#the-development-address), without a certificate to accept, and its pages
-reload by themselves when the server starts again. `bacon run-long` restarts the server after each
-change; see [getting started](./getting-started.md#run-it).
-
-For pages that are built with JavaScript in the browser, see [single-page
-apps](./single-page-app.md) instead.
-
-## What you get
-
-A small site with a menu, three pages, a contact form that the server checks, and pages for a
-missing address and for an error:
-
-- `src/main.rs`: starts the server. You seldom need to change it.
-- `src/routes.rs`: the routes and the middleware, with their tests in `src/routes/tests.rs`.
-- `src/pages.rs`: the pages, as types that [Askama](https://askama.rs) templates fill in.
-- `src/contact.rs`: the contact form.
-- `templates/`: the HTML. `base.html` is the frame with the menu, which the pages extend.
-- `static/`: styles and the icon, served below `/static/`.
-- `bacon.toml`: makes bacon watch `templates/` and `static/` as well as `src/`.
-
-The routes:
+The website template puts its routes in `src/routes.rs`.
 
 <<< ../templates/website/src/routes.rs
 
 ## Add a page
 
-Write `templates/news.html`:
-
-```text
-{% extends "base.html" %}
-{% block content %}
-<p>What is new.</p>
-{% endblock %}
-```
-
-Then add its type and handler to `src/pages.rs`, like `About` and `about`, a route to
-`src/routes.rs`, and a link to the menu in `templates/base.html`:
-
-```text
-.route(page("/news"), pages::news.into_service())
-```
+Follow [Add a page or endpoint](./template-website.md#add-a-page-or-endpoint) in the template guide
+to add a page, a route and a menu item.
 
 Askama checks the templates when the project is built, so a missing value is a compile error. It
 escapes values, so text from visitors cannot add markup.
@@ -124,8 +87,6 @@ redirects with a 303, so that reloading the next page does not send it again:
 Each field has a label, and one with a problem has `aria-invalid` and a description, which screen
 readers announce. The list of problems links to the fields, and the page's title begins with
 `Error:`:
-
-<<< ../templates/website/templates/contact.html
 
 The form has `novalidate`, so that the browser leaves the checks to the server, whose messages are
 the same everywhere. A site with logins also needs protection against forms on other sites (CSRF),
