@@ -132,6 +132,26 @@ async fn the_development_address_must_be_loopback() {
 }
 
 #[tokio::test]
+async fn a_mapped_development_address_is_opened_as_ipv4() {
+    let authority = Authority::new();
+    let mapped = "[::ffff:127.0.0.1]:0".parse().unwrap();
+    let running = Running::start(development(&authority).development(mapped), site());
+    let port = running.development.unwrap().port();
+    let ipv4 = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let get = |host: &str| format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    // A browser reaches the listener as 127.0.0.1, which the host rule accepts.
+    let response = common::cleartext(ipv4, &get(&ipv4.to_string())).await;
+    assert!(response.contains(" 200 OK\r\n"), "{response}");
+    // The mapped form is not a secure context, so it is refused, and the 403 names the other.
+    let response = common::cleartext(ipv4, &get(&format!("[::ffff:127.0.0.1]:{port}"))).await;
+    assert!(response.contains(" 403 Forbidden\r\n"), "{response}");
+    assert!(
+        response.contains(&format!("Open http://{ipv4}/")),
+        "{response}"
+    );
+}
+
+#[tokio::test]
 async fn a_taken_development_address_is_reported() {
     let authority = Authority::new();
     let taken = TcpListener::bind(ANY_PORT).unwrap();
@@ -274,10 +294,12 @@ async fn other_sites_are_refused_on_the_development_address() {
                     &[],
                 ),
                 to("GET", &format!("http://127.0.0.1.nip.io:{port}/"), &[]),
-                // Addresses that are not loopback. Chromium sends no Fetch Metadata to
-                // `http://0.0.0.0`, which is not a secure context, so a script from another site
-                // could otherwise read from it.
+                // Addresses that are not loopback, and the IPv4-mapped form of one. Chromium
+                // sends no Fetch Metadata to `http://0.0.0.0` or `http://[::ffff:127.0.0.1]`,
+                // which are not secure contexts, so a page on another site could otherwise make
+                // the application answer its requests.
                 to("GET", &format!("http://0.0.0.0:{port}/"), &[]),
+                to("GET", &format!("http://[::ffff:127.0.0.1]:{port}/"), &[]),
                 to("GET", &format!("http://[::]:{port}/"), &[]),
                 to("GET", &format!("http://192.168.1.20:{port}/"), &[]),
                 to(
@@ -336,7 +358,6 @@ async fn other_sites_are_refused_on_the_development_address() {
                 to("GET", &here, &[("origin", "https://attacker.example")]),
                 to("POST", &here, &[("origin", "http://127.0.0.1:5173")]),
                 to("POST", &here, &[("sec-fetch-site", "same-origin")]),
-                to("GET", &format!("http://[::ffff:127.0.0.1]:{port}/"), &[]),
                 // The site's own form, under `Referrer-Policy: no-referrer`, from Chromium.
                 to(
                     "POST",

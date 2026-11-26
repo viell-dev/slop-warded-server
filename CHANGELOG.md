@@ -19,8 +19,9 @@ New projects open in a browser at once, and their code holds no wiring
   host than a loopback address, `localhost` or a name below `.localhost` (against DNS rebinding),
   for those that the browser marks as made by another site, except to open a page, and for changes
   and WebSockets from an origin that is not on this computer.
-  - Other IP addresses, such as `0.0.0.0`, get the 403 for the host as well. Browsers send no Fetch
-    Metadata to them, so a script on another site could read pages through `http://0.0.0.0:3000`.
+  - Other IP addresses, such as `0.0.0.0` and `[::ffff:127.0.0.1]`, get the 403 for the host as
+    well. Browsers send no Fetch Metadata to them, so a page on another site could make the
+    application answer requests through `http://0.0.0.0:3000`.
   - A request that the browser marks as `Sec-Fetch-Site: same-origin` has its origin accepted, so
     that a site's own form under `Referrer-Policy: no-referrer`, which Chromium sends with
     `Origin: null`, is not refused.

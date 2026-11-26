@@ -58,7 +58,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let forever = HeaderValue::from_static("public, max-age=31536000, immutable");
     let files = Router::new()
-        .nest_service("/static", ServeDir::new(directory.path()))
+        .nest_service(
+            "/static",
+            ServeDir::new(directory.path()).append_index_html_on_directories(false),
+        )
         .layer(SetResponseHeaderLayer::if_not_present(
             CACHE_CONTROL,
             move |response: &Response| {

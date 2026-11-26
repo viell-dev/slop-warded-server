@@ -129,9 +129,9 @@ impl Server {
     /// Whether pages from the development address reload when the server restarts.
     ///
     /// Each HTML page that a browser opens there gets a small script, which waits for the server to
-    /// go away, after a rebuild for instance, and reloads the page when it is back. Responses on
-    /// the development address are therefore not compressed. Turn it off for tools that bring
-    /// their own, such as cargo-leptos or Vite. Default: on.
+    /// go away, after a rebuild for instance, and reloads the page when it is back. While it is on,
+    /// responses on the development address are not compressed, so that the script can be added.
+    /// Turn it off for tools that bring their own, such as cargo-leptos or Vite. Default: on.
     pub fn live_reload(mut self, enabled: bool) -> Self {
         self.live_reload = enabled;
         self
@@ -418,6 +418,7 @@ impl BoundServer {
         );
         // A URL that terminals let people click, for a browser on this computer.
         if let Some(address) = self.development_addr {
+            let address = crate::context::canonical(address);
             tracing::info!("open http://{address}/ in a browser");
         } else if is_loopback(self.https_addr) {
             let port = self.https_addr.port();

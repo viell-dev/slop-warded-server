@@ -77,8 +77,9 @@ development setting becomes a deployed one.
   page (DNS rebinding). So the address refuses, before the application and the reload stream,
   requests for other hosts than loopback addresses, `localhost` and names below `.localhost`, as
   Vite's `server.allowedHosts` does; rebinding needs a name that the attacker's DNS answers. Other
-  IP addresses are refused too: `http://0.0.0.0` reaches the listener, but is not a secure context,
-  so browsers send it no Fetch Metadata, and a script on another site could read from it. The
+  IP addresses are refused too, including IPv4-mapped loopback ones: `http://0.0.0.0` and
+  `http://[::ffff:127.0.0.1]` reach the listener, but are not secure contexts, so browsers send them
+  no Fetch Metadata, and a page on another site could make the application answer them. The
   listener is on loopback, so other addresses arrive only through forwarding. It also follows
   Fetch Metadata's resource isolation policy, and refuses changes and WebSockets whose `Origin` is
   not on this computer, which covers browsers without Fetch Metadata. A request marked

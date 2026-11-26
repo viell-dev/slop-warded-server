@@ -242,8 +242,9 @@ fn keep_declared_length(headers: &mut HeaderMap) {
     }
 }
 
-/// An IPv4 client of a dual-stack listener has an IPv4 address, not an IPv4-mapped IPv6 one.
-fn canonical(address: SocketAddr) -> SocketAddr {
+/// An IPv4-mapped address in its IPv4 form, so that an IPv4 client of a dual-stack listener has an
+/// IPv4 address.
+pub(crate) fn canonical(address: SocketAddr) -> SocketAddr {
     SocketAddr::new(address.ip().to_canonical(), address.port())
 }
 
