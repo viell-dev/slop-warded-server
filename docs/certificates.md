@@ -5,7 +5,8 @@ description: "Get a certificate for development or the public, give it to the se
 # Certificates
 
 HTTPS needs a certificate, which proves to clients that the server owns its name, and a private key.
-The server reads both from PEM files:
+The server reads both from PEM files. For setting these variables in PowerShell, see
+[Shell and curl](./getting-started.md#shell-and-curl).
 
 ```sh
 WARDED_TLS_CERT=fullchain.pem WARDED_TLS_KEY=privkey.pem cargo run
@@ -26,6 +27,8 @@ mkcert -install
 mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1 ::1
 WARDED_TLS_CERT=cert.pem WARDED_TLS_KEY=key.pem cargo run
 ```
+
+In PowerShell, set the two variables as in [Shell and curl](./getting-started.md#shell-and-curl).
 
 Without mkcert, OpenSSL makes one that nothing trusts, but that stays the same when the server
 starts again:
@@ -80,6 +83,11 @@ that are open keep theirs.
 process.
 
 On Windows, or to decide the moment yourself, keep a clone of the `Tls` and reload it from code:
+
+```sh
+cargo add tracing
+cargo add tokio --features time
+```
 
 ```rust
 use std::time::Duration;

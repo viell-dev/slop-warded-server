@@ -5,11 +5,14 @@ HTTP/3 with [Warded Server](https://github.com/viell-dev/slop-warded-server).
 
 ## Start
 
-With [Rust and a C compiler][requirements], run this from the project directory.
+See [requirements and shells][requirements], then run this from the project directory.
 
 ```sh
 cargo run
 ```
+
+The first build can take a few minutes. The startup `WARN` about a certificate that clients do
+not trust is expected. The development address uses plain HTTP.
 
 Open the address printed in the log, `http://127.0.0.1:3000/`. The project's
 `.cargo/config.toml` sets `WARDED_DEV_ADDR` for this address.

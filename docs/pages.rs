@@ -57,6 +57,7 @@ mod tests {
         "rust,no_run",
         "toml",
         "sh",
+        "powershell",
         "text",
         "diff",
         "ini",

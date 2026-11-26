@@ -49,6 +49,10 @@ It is these layers from `tower-http`, from the outside in:
 
 To choose other layers, or another order, use them yourself:
 
+```sh
+cargo add tower-http --features catch-panic,compression-br,compression-gzip,trace
+```
+
 ```rust
 use axum::{body::Body, handler::HandlerWithoutStateExt, http::Request};
 use tower::{ServiceBuilder, ServiceExt};
@@ -106,6 +110,7 @@ until the response begins, so it does not end streams:
 
 ```sh
 cargo add tower-http --features timeout
+cargo add tokio --features time
 ```
 
 ```rust

@@ -9,8 +9,8 @@ The names used below are in the [glossary](./glossary.md).
 
 ## Start
 
-See [what you need](./getting-started.md#what-you-need) for Rust, a C compiler and
-`cargo-generate`. Install `cargo-generate` once if you need it.
+See [what you need](./getting-started.md#what-you-need) for Rust, a C compiler,
+`cargo-generate` and the shell to run the commands in.
 
 ```sh
 cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.2 --name my-api
@@ -45,9 +45,14 @@ Stop the server with Ctrl+C, run `cargo run` again, and refresh `/` to see the n
 ## Add a page or endpoint
 
 Add a `GET /health` endpoint. In `src/routes.rs`, paste `Health` and `health` from the
-example below above `#[cfg(test)]`. Add the `.route(...)` call to the existing chain before
-`.fallback(...)`. Add `"GET /health",` to the `endpoints` list in `index`, so that it shows
-up at `/`.
+example below above `#[cfg(test)]`. Add its `.route(...)` call just after the one for `GET /`.
+Add `"GET /health",` to the `endpoints` list in `index` so that it shows up at `/`.
+
+Warded chooses the first matching route. Put fixed paths above patterns that could also match
+them. For example, put `GET /notes/count` above `GET /notes/{id}` so the latter does not try to
+read `count` as an integer ID. See [Declaring routes](./requests.md#declaring-routes).
+When a handler takes `State<Notes>`, give its route `.with_state(notes.clone())`. The clones
+share the same notes.
 
 This complete example shows the new handler and checks what it returns. The template already
 has the imports needed for the code you copy.
@@ -85,6 +90,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Open `http://127.0.0.1:3000/health` for `{"status":"ok"}`. This endpoint says that the
 app can answer. It has no database to check.
 
+Add the lines marked `+` to `src/routes/tests.rs`, without the `+`, and run `cargo test`.
+The test uses the file's existing `send` helper to check the response from your application.
+
+```diff
++#[tokio::test]
++async fn health_answers() {
++    let app = app(Notes::default()).unwrap();
++    let response = send(&app, "GET", "/health", None).await;
++    assert_eq!(response, (StatusCode::OK, json!({ "status": "ok" })));
++}
+```
+
 ## Add data or a form
 
 Add a `pinned` flag to a note. The example store is in memory, so restarting clears the notes.
@@ -97,7 +114,8 @@ Add a `pinned` flag to a note. The example store is in memory, so restarting cle
 2. In `src/routes/tests.rs`, update the expected `note` in
    `notes_can_be_created_read_and_deleted` to `json!({ "id": 1, "text": "milk", "pinned": false })`.
    Keep its POST body as it is to check the default.
-3. Restart and run these commands from another terminal. The first sends a note as JSON.
+3. Restart and run these [curl commands](./getting-started.md#shell-and-curl) from another
+   terminal. The first sends a note as JSON.
    The second lists the notes, including the new one with `"pinned":true`.
 
 ```sh
@@ -108,13 +126,15 @@ curl http://127.0.0.1:3000/notes
 ## Test and put it online
 
 Run `cargo test` to check creating, reading and deleting notes, the endpoint list and error
-responses. [Testing](./testing.md) shows how to add a test for the new endpoint.
+responses. See [Testing](./testing.md) for more ways to check the application.
 
 Run `cargo build --release` to build the program. Replace the example in-memory store before
-you need notes to survive a restart. Read [limits](./limits.md) before deploying, and keep this
-alpha off the open internet.
+you need notes to survive a restart. Run this alpha on your own computer or a private network
+whose users you trust. Keep it off public sites and read the [limits](./limits.md) before deploying.
 [Deployment](./deployment.md) covers starting the binary and setting its addresses.
 [Certificates](./certificates.md) explains how to get and configure a trusted certificate.
+For a Linux server, build on Linux or use the [Dockerfile](./deployment.md#containers).
+A Windows executable does not run on Linux.
 
 ## Learn more
 

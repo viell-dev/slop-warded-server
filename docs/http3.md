@@ -33,7 +33,7 @@ HTTP/2 when it does not work. So HTTP/1.1 and HTTP/2 are always needed as well.
 
 ## Check that it works
 
-With a curl that has HTTP/3, which `curl --version` lists among its features:
+Use a [curl build that supports HTTP/3](./getting-started.md#shell-and-curl):
 
 ```sh
 curl --insecure --http3-only --include https://localhost:8443/
