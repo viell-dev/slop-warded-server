@@ -43,7 +43,7 @@ impl Server {
     ) -> Result<Self, Error> {
         let get = |name| Ok(read(name)?.filter(|value| !value.is_empty()));
         let https: Option<SocketAddr> = parse(HTTPS_ADDR, get(HTTPS_ADDR)?, ADDRESS)?;
-        let local = https.is_none_or(|address| address.ip().to_canonical().is_loopback());
+        let local = https.is_none_or(is_loopback);
         let tls = match (get(TLS_CERT)?, get(TLS_KEY)?) {
             (Some(chain), Some(key)) => Tls::pem_files(chain, key)?,
             (Some(_), None) => return Err(invalid(TLS_KEY, "is needed with WARDED_TLS_CERT")),

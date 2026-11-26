@@ -55,6 +55,25 @@
 //! - `middleware`: `DefaultMiddleware`.
 //! - `self-signed`: `Tls::self_signed`, for development.
 //! - `warded`: `app`, `Params` and the security context.
+//!
+// The helpers' links lead to the features where a feature removes them.
+#![cfg_attr(feature = "logging", doc = "[`init_logging`]: crate::init_logging")]
+#![cfg_attr(not(feature = "logging"), doc = "[`init_logging`]: #features")]
+#![cfg_attr(
+    feature = "middleware",
+    doc = "[`DefaultMiddleware`]: crate::DefaultMiddleware"
+)]
+#![cfg_attr(not(feature = "middleware"), doc = "[`DefaultMiddleware`]: #features")]
+#![cfg_attr(feature = "files", doc = "[`StaticFiles`]: crate::StaticFiles")]
+#![cfg_attr(not(feature = "files"), doc = "[`StaticFiles`]: #features")]
+#![cfg_attr(
+    all(feature = "files", feature = "warded"),
+    doc = "[`SinglePageApp`]: crate::SinglePageApp"
+)]
+#![cfg_attr(
+    not(all(feature = "files", feature = "warded")),
+    doc = "[`SinglePageApp`]: #features"
+)]
 
 #[cfg(all(feature = "http3", panic = "abort"))]
 compile_error!(
