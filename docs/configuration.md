@@ -7,17 +7,21 @@ description: "Every environment variable and setting: addresses, certificates, H
 `Server::from_env()` reads environment variables, and the methods of `Server` set the rest in code.
 Use either or both:
 
-| Variable             | Method           | Meaning                                    | Default          |
-| -------------------- | ---------------- | ------------------------------------------ | ---------------- |
-| `WARDED_HTTPS_ADDR`  | `https`          | HTTPS address, over TCP and UDP            | `127.0.0.1:8443` |
-| `WARDED_HTTP_ADDR`   | `redirect_http`  | Cleartext address that redirects to HTTPS  | none             |
-| `WARDED_TLS_CERT`    | `Server::new`    | PEM certificate chain file                 | generated        |
-| `WARDED_TLS_KEY`     | `Server::new`    | PEM private key file                       | generated        |
-| `WARDED_HTTP3`       | `http3`          | `on` or `off`                              | `on`             |
-| `WARDED_PUBLIC_PORT` | `public_port`    | HTTPS port that clients use, if it differs | the bound port   |
-|                      | `serve_http`     | Cleartext address that serves the application | none          |
-|                      | `limits`         | [Limits](#limits) on clients               | see below        |
-|                      | `grace_period`   | [Time to finish](#stopping) when stopping  | 30 seconds       |
+| Variable             | Method          | Meaning                                       | Default          |
+| -------------------- | --------------- | --------------------------------------------- | ---------------- |
+| `WARDED_HTTPS_ADDR`  | `https`         | HTTPS address, over TCP and UDP               | `127.0.0.1:8443` |
+| `WARDED_HTTP_ADDR`   | `redirect_http` | Cleartext address that redirects to HTTPS     | none             |
+| `WARDED_DEV_ADDR`    | `development`   | [Development address](#the-development-address), on loopback | none |
+| `WARDED_TLS_CERT`    | `Server::new`   | PEM certificate chain file                    | generated        |
+| `WARDED_TLS_KEY`     | `Server::new`   | PEM private key file                          | generated        |
+| `WARDED_HTTP3`       | `http3`         | `on` or `off`                                 | `on`             |
+| `WARDED_PUBLIC_PORT` | `public_port`   | HTTPS port that clients use, if it differs    | the bound port   |
+|                      | `serve_http`    | Cleartext address that serves the application | none             |
+|                      | `live_reload`   | Pages that reload on the development address  | on               |
+|                      | `limits`        | [Limits](#limits) on clients                  | see below        |
+|                      | `grace_period`  | [Time to finish](#stopping) when stopping     | 30 seconds       |
+
+The templates set `WARDED_DEV_ADDR` to `127.0.0.1:3000` in `.cargo/config.toml`.
 
 In code:
 
@@ -55,6 +59,40 @@ UDP on the HTTPS port. If that port is taken, the server does not start.
 On a loopback address, the server generates a certificate when you give it none. Anywhere else it
 needs [a real one](./certificates.md), so that a missing setting cannot put a server that nobody
 should trust on a network.
+
+## The development address
+
+`WARDED_DEV_ADDR`, or `development` in code, serves the application over plain HTTP too, for a
+browser on this computer. Browsers open `http://127.0.0.1` without a certificate, and treat it as a
+secure context, as they do `http://localhost`. The server logs the address to open:
+
+```text
+INFO warded_server::server: open http://127.0.0.1:3000/ in a browser
+```
+
+It has to be a loopback address, such as `127.0.0.1` or `[::1]`, because nothing on it is
+encrypted. The log names the IP address rather than `localhost`, which some systems resolve to
+IPv6 first. Things to know about it:
+
+- **Browsers use HTTP/1.1 there.** Use HTTPS for HTTP/2 and HTTP/3; it keeps running at the same
+  time.
+- **Requests are not secured**, so routes with Warded's `secured()` condition do not match, and
+  those with `unsecure()` do.
+- **HTML pages reload by themselves** when the server starts again. Each page that a browser opens
+  there gets a small script, which waits on an event stream at `/_tower-livereload/event-stream`
+  for the server to go away and come back. Fragments that scripts fetch do not get it. Responses are
+  not compressed there, so that the script can be added. Turn it off with `live_reload(false)`, for
+  tools that bring their own, such as Vite or cargo-leptos.
+- **It is apart from `WARDED_HTTP_ADDR` and `serve_http`**, and can be used with either.
+
+In a project from a template, `.cargo/config.toml` sets the variable for the programs that Cargo
+starts: `cargo run`, `cargo test` and watchers that run them. A program that is built and started
+on its own, as in a [deployment](./deployment.md), does not get it. `cargo run --release` does, so
+do not deploy with Cargo. A variable that is set already takes precedence, so
+`WARDED_DEV_ADDR= cargo run` turns the address off.
+
+The templates' READMEs show how [bacon](https://dystroy.org/bacon/) restarts the server after each
+change: `cargo install --locked bacon` once, then `bacon run-long` in place of `cargo run`.
 
 ## Cleartext HTTP
 
@@ -101,11 +139,15 @@ Make whatever manages the process wait longer than the grace period before it ki
 ## Logging
 
 The server reports through [`tracing`](https://docs.rs/tracing), and a subscriber such as
-`tracing-subscriber` decides what happens with it. The templates install one that reads `RUST_LOG`:
+`tracing-subscriber` decides what happens with it. `warded_server::init_logging()`, which the
+templates call first in `main`, prints to the terminal at the `info` level, or as `RUST_LOG` says:
 
 ```sh
 RUST_LOG=info,warded_server=debug cargo run
 ```
+
+With `DefaultMiddleware`, which the `api` and `website` templates use, each request is logged at
+`info` too.
 
 Failed connections and malformed requests are reported at `debug`, because any client can cause
 them. Errors that need your attention, such as a certificate that cannot be reloaded, are at `warn`

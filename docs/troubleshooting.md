@@ -30,10 +30,13 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 | Message                                                          | Cause and fix                                                                       |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `cannot listen on … for HTTPS over TCP: Address already in use`  | Something uses the port, often another copy of the server                           |
+| `cannot listen on … for development over HTTP: Address already in use` | Another project uses `127.0.0.1:3000`; stop it, or set `WARDED_DEV_ADDR` to another port |
 | `cannot listen on … for HTTP/3 over UDP: Address already in use` | Something uses the UDP port; choose another, or turn off HTTP/3                     |
 | `cannot listen on …: Permission denied`                          | Ports below 1024 need a permission; see [deployment](./deployment.md#systemd)       |
 | `WARDED_TLS_CERT is needed …`                                    | It listens beyond this computer, where it needs a [certificate](./certificates.md)  |
 | `WARDED_HTTPS_ADDR is not an address and port`                   | Use an IP address with a port, such as `0.0.0.0:8443`, and not a host name          |
+| `WARDED_DEV_ADDR must be a loopback address …`                   | It has no TLS; use `127.0.0.1` or `[::1]`, and HTTPS for others; see [the development address](./configuration.md#the-development-address) |
+| `the development address … must be a loopback address …`         | The same, for `Server::development` in code                                         |
 | `cannot read …: I/O error: No such file or directory`            | The path is wrong, or relative to another directory than you think                  |
 | `cannot read …: I/O error: Permission denied`                    | The program's user may not read the file; see [deployment](./deployment.md#systemd) |
 | `cannot read …: no items found`                                  | The file holds no certificate, or no private key, in PEM form                       |
@@ -42,8 +45,12 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 
 ## Clients cannot connect
 
-- **The browser warns about the certificate.** It is the generated one; see [certificates for
+- **The browser warns about the certificate.** It is the generated one. Open the address that the
+  log names with `open http://…` instead, or see [certificates for
   development](./certificates.md#for-development).
+- **The log names no `http://` address.** The project has no
+  [development address](./configuration.md#the-development-address): its `.cargo/config.toml` is
+  missing, it was started without Cargo, or `WARDED_DEV_ADDR` is set to something else.
 - **`localhost` works on this computer, but not from another.** The default address only accepts
   this computer; see [addresses](./configuration.md#addresses).
 - **Clients speak plain HTTP to the HTTPS port.** curl says `Received HTTP/0.9 when not allowed`,
@@ -62,13 +69,25 @@ Check in this order:
 3. The certificate comes from a public authority; see [in browsers](./http3.md#in-browsers).
 4. Load the page again after a few seconds. The first connection is always HTTP/2 or HTTP/1.1.
 
+## The page does not reload
+
+- **It is not on the development address.** Only pages from the `http://` address that the log
+  names reload, and not those over HTTPS.
+- **It is not HTML.** Text and JSON stay as they are; reload them yourself.
+- **Nothing restarted the server.** The page reloads when the server starts again. Run
+  [bacon](https://dystroy.org/bacon/) with `bacon run-long`, which restarts it after each change.
+  Files outside `src/` count only if `bacon.toml` names them in `watch`, and files that Git ignores
+  never do, also where the project is inside an ignored directory of another repository.
+- **A script fetched it.** The reload script is added to pages that the browser opens, and not to
+  HTML that scripts fetch, or that is compressed already.
+
 ## A 404 that should not be
 
 - **The path differs**, often by a slash at the end. Paths match exactly.
 - **The method differs.** `get()` does not include HEAD; browsers and monitors send it. Use
   `get().or(head())`.
 - **A condition on the version or a header failed.** Such routes are skipped, and another may
-  answer.
+  answer. On the development address, the version is HTTP/1.1, and `secured()` does not hold.
 - **The pattern is not one.** `path("/orders/:id")` and `exact_path("/orders/{id}")` are literal
   text; write `path("/orders/{id}")`.
 - **The destination is an Axum router** that has its own 404. Warded does not try further routes

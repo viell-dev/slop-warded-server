@@ -39,7 +39,7 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 | Limits on bodies, time and busy handlers | [Middleware](./middleware.md). Axum's extractors limit bodies to 2 MB  |
 | Authentication and sessions              | [Middleware or handlers](./json-api.md#require-authentication-on-some-routes) |
 | CORS and security headers                | [Middleware](./middleware.md#security-headers)                         |
-| Compression, logging, 500 for panics     | [Middleware](./middleware.md), in the `api` and `website` templates    |
+| Compression, logging, 500 for panics     | [`DefaultMiddleware`](./middleware.md), in the `api` and `website` templates |
 | Trust in a proxy that ends TLS           | [Middleware](./deployment.md#a-proxy-that-ends-tls)                    |
 | Databases, background work, e-mail       | Libraries of your choice                                               |
 
@@ -91,10 +91,24 @@ the rest, because some clients could otherwise miss the response. It tells the c
 has been silent for five seconds, or after 30 seconds. A shutdown waits for that within its grace
 period, before it closes the connection as above.
 
+## The development address
+
+The [development address](./configuration.md#the-development-address) is for a browser on the same
+computer, and not for others:
+
+- It serves plain HTTP/1.1, on loopback addresses only. HTTP/2 and HTTP/3 need HTTPS, and Warded's
+  `secured()` condition does not hold there.
+- Its responses are not compressed, so that pages can get the reload script.
+- Pages reload when the server starts again, and not when a file changes by itself. A watcher such
+  as bacon has to restart it, also for files that the server reads, such as those in `static/`.
+- `.cargo/config.toml` applies to every program that Cargo starts, `cargo run --release` included.
+  Start a deployed program without Cargo.
+
 ## Tested environments
 
 - **In CI:** Rust 1.99.1 on Linux and Windows, with real HTTP/1.1, HTTP/2 and HTTP/3 connections
-  over loopback from Rust clients, and each template's project on Linux.
+  over loopback from Rust clients, and each template's project on Linux, started with `cargo run`.
+  The website template's pages are used in Google Chrome, also across a restart.
 - **Before a release, on Linux:** curl with each protocol and with the upgrade through `Alt-Svc`,
   and Chromium over HTTP/3.
 - **Not tested:** macOS, real networks, load, other HTTP/3 clients, and applications built with

@@ -24,7 +24,7 @@ features:
     details: Warded selects on method, path, headers, language, HTTP version and whether the connection is secure, in the order you declare.
 ---
 
-Create a project, choose a template and run it:
+Create a project, choose a template, run it, and open the address that it prints:
 
 ```sh
 cargo install cargo-generate --locked

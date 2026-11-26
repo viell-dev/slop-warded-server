@@ -32,7 +32,7 @@ It asks for a template and a project name, and makes a directory with that name:
 | ------------------- | ---------------------------------------------------- | ---------------------------- |
 | `templates/minimal` | Learning, or adding only what you want               | this page                    |
 | `templates/api`     | A JSON API, also as the back end of an app           | [JSON API](./json-api.md)    |
-| `templates/website` | HTML pages from the server, with styles and images   | [Website](./website.md)      |
+| `templates/website` | HTML pages from the server, with a form and styles   | [Website](./website.md)      |
 
 To skip the questions, name both:
 
@@ -47,9 +47,27 @@ cd my-app
 cargo run
 ```
 
-The first build takes a minute or so. The `api` template has its routes below `/notes` instead of at
-`/`. When the log says `serving`, the server is at `https://localhost:8443`. It made a certificate
-that nothing trusts, so a browser warns about it and curl needs `--insecure`:
+The first build takes a minute or so. Then the log says where to go:
+
+```text
+INFO warded_server::server: open http://127.0.0.1:3000/ in a browser
+```
+
+Open that address. It is the [development address](./configuration.md#the-development-address):
+plain HTTP for this computer alone, so there is no certificate to accept. Browsers use HTTP/1.1
+there, and Warded's `secured()` condition does not hold. HTML pages reload by themselves when the
+server starts again. The `api` template lists its endpoints at `/`.
+
+Stop the server with Ctrl+C, twice to do it at once. To restart it after each change, install
+[bacon](https://dystroy.org/bacon/) once, and run it in place of `cargo run`:
+
+```sh
+cargo install --locked bacon
+bacon run-long
+```
+
+HTTPS runs at the same time, at `https://localhost:8443`, for HTTP/2 and HTTP/3. It made a
+certificate that nothing trusts, so a browser warns about it and curl needs `--insecure`:
 
 ```sh
 curl --insecure --http1.1 https://localhost:8443/
@@ -57,9 +75,7 @@ curl --insecure --http2 https://localhost:8443/
 curl --insecure --http3-only https://localhost:8443/
 ```
 
-The last one needs a curl with HTTP/3, which `curl --version` lists among its features. Stop the
-server with Ctrl+C, twice to do it at once.
-
+The last one needs a curl with HTTP/3, which `curl --version` lists among its features.
 [Certificates](./certificates.md) explains how to get one that browsers trust, also for development.
 
 ## The code
@@ -75,8 +91,10 @@ The minimal template's `src/main.rs` is a whole application:
   the handler takes any.
 - **`warded_server::app(routes)`** makes an `axum::Router` of them, which accepts
   [middleware](./middleware.md).
+- **`init_logging()`** prints what the server logs, such as the address to open.
 - **`Server::from_env()`** reads its settings from [environment variables](./configuration.md), and
-  **`serve`** runs until the process is asked to stop.
+  **`serve`** runs until the process is asked to stop. The template's `.cargo/config.toml` sets the
+  development address for `cargo run`.
 
 ## Add it to a project
 
@@ -94,17 +112,15 @@ version of `warded` would be a separate library to Rust, whose `secured()` condi
 what the server knows about the connection.
 
 The server logs through [`tracing`](https://docs.rs/tracing), and shows nothing without a
-subscriber. Add one to see its address and its warnings:
+subscriber. Call `warded_server::init_logging()` first in `main` to see its address and its
+warnings, or set up a subscriber of your own.
 
-```sh
-cargo add tracing-subscriber
-```
+For the development address, add this to `.cargo/config.toml` in the project, or use
+`Server::development` in code:
 
-```rust
-fn main() {
-    tracing_subscriber::fmt::init();
-    // Then run the server.
-}
+```toml
+[env]
+WARDED_DEV_ADDR = "127.0.0.1:3000"
 ```
 
 If you have an Axum application, see [existing Axum applications](./existing-axum.md).
@@ -123,7 +139,10 @@ All are on by default. Turn them off with `default-features = false` and list th
 
 | Feature       | Provides                                                         |
 | ------------- | ---------------------------------------------------------------- |
+| `files`       | `StaticFiles` and, with `warded`, `SinglePageApp`                |
 | `http3`       | [HTTP/3](./http3.md)                                             |
+| `logging`     | `init_logging`                                                   |
+| `middleware`  | `DefaultMiddleware`                                              |
 | `self-signed` | The generated development certificate                            |
 | `warded`      | `app`, `Params` and the security context for Warded's conditions |
 

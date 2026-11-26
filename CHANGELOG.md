@@ -2,6 +2,34 @@
 
 Versions follow [Semantic Versioning](https://semver.org). Any prerelease may break compatibility.
 
+## Unreleased
+
+New projects open in a browser at once, and their code holds no wiring
+([#18](https://github.com/viell-dev/slop-warded-server/issues/18)).
+
+- **A development address:** `Server::development` or `WARDED_DEV_ADDR` also serves the application
+  over plain HTTP on a loopback address, for a browser on this computer without a certificate.
+  Other addresses are refused, because nothing on it is encrypted. Browsers use HTTP/1.1 there, and
+  Warded's `secured()` does not hold. Its HTML pages reload by themselves when the server restarts,
+  unless `live_reload(false)` turns that off, and its responses are not compressed. See
+  [configuration](https://viell-dev.github.io/slop-warded-server/configuration.html#the-development-address).
+- The log says what to open, such as `open http://127.0.0.1:3000/ in a browser`. The `serving` line
+  has a `development` field.
+- **Helpers**, over `tracing-subscriber`, `tower-http` and Axum, behind new default features:
+  `init_logging` (`logging`), `DefaultMiddleware` with tracing, compression and a 500 for panics
+  (`middleware`), and `StaticFiles` and `SinglePageApp` (`files`). The library brings 28 more
+  crates with all of them.
+- `Error::Development` reports a development address that is not loopback.
+- **Templates:** each sets `WARDED_DEV_ADDR=127.0.0.1:3000` in `.cargo/config.toml`, for
+  `cargo run`, and uses the helpers in place of its own wiring. Their READMEs show how
+  [bacon](https://dystroy.org/bacon/) restarts the server after each change.
+  - `api` answers `GET /` with a list of its endpoints.
+  - `website` is a small site: a menu, three pages, a contact form that the server checks and that
+    redirects after success, pages for a 404 and a 500, an icon, and a `bacon.toml`. The page in two
+    languages moved to the [website guide](https://viell-dev.github.io/slop-warded-server/website.html#languages).
+  - Projects from earlier templates keep working. To take the new start into one, add the
+    `.cargo/config.toml` of its template.
+
 ## 0.1.0-alpha.2 - 2026-11-25
 
 HTTP/3 no longer lets a client fill the memory, and fewer responses are lost. The server is still not

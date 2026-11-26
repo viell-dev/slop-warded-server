@@ -26,18 +26,18 @@ only, with a certificate that nothing trusts. [Configuration](./configuration.md
 [certificates](./certificates.md) change that.
 
 The server tells its address, and what is wrong, through `tracing`. If the application has no
-subscriber yet, add one, or nothing is shown:
-
-```sh
-cargo add tracing-subscriber
-```
+subscriber yet, add one, or nothing is shown. `init_logging` prints to the terminal, as `RUST_LOG`
+says:
 
 ```rust
 fn main() {
-    tracing_subscriber::fmt::init();
+    warded_server::init_logging();
     // Then run the server.
 }
 ```
+
+To open it in a browser without a certificate, give it a [development
+address](./configuration.md#the-development-address) as well.
 
 The application needs no other changes. Its state, extractors, layers, 404s and 405s stay as they
 are. A few things work differently underneath:
