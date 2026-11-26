@@ -339,6 +339,8 @@ mod tests {
             "[2001:db8::1]",
             "[::ffff:192.0.2.42]",
             "[::ffff:127.0.0.1]:5173",
+            // The form Chromium writes in `Host` for that address.
+            "[::ffff:7f00:1]:5173",
             "[::]",
             "[::]:3000",
             "attacker.example",

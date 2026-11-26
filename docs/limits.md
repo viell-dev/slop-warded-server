@@ -121,8 +121,8 @@ computer, and not for others:
   use HTTP/2. HTTP/2 in browsers and HTTP/3 need HTTPS, and Warded's `secured()` condition does not
   hold there.
 - It answers only requests for a loopback address, `localhost` or a name below `.localhost`. Other
-  addresses, such as `0.0.0.0`, and a name for this computer in the hosts file get a 403, as do
-  requests that other sites make, except to open a page; see
+  addresses, such as `0.0.0.0` and `[::ffff:127.0.0.1]`, and a name for this computer in the hosts
+  file get a 403, as do requests that other sites make, except to open a page; see
   [configuration](./configuration.md#the-development-address). There is no setting for other
   names.
 - While live reload is on, its responses are not compressed, so that pages can get the reload
