@@ -83,8 +83,9 @@ IPv6 first. Things to know about it:
   - **for another host** than a loopback address, `localhost` or a name below `.localhost`, such as
     `app.localhost`. Another site's DNS name can lead to `127.0.0.1` (DNS rebinding), and so do
     names in the hosts file, which are refused too. So are other IP addresses, such as `0.0.0.0`,
-    which browsers do not treat as secure, and send no `Sec-Fetch-Site`. Open the address that the
-    log names, or use a name below `.localhost`.
+    and the IPv4-mapped form of a loopback address, such as `[::ffff:127.0.0.1]`, which browsers do
+    not treat as secure, and send no `Sec-Fetch-Site`. Open the address that the log names, or use
+    a name below `.localhost`.
   - **from another site**, as the browser says with `Sec-Fetch-Site: cross-site`, unless the request
     opens a page with GET or HEAD. Links to the address from elsewhere work; scripts, forms that
     send POST, and `<object>` or `<embed>` on other sites do not.

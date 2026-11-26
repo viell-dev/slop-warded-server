@@ -324,6 +324,7 @@ async fn other_sites_are_refused_on_the_development_address() {
                 ),
                 // A page can come from any server's IP address.
                 to("POST", &here, &[("origin", "http://192.0.2.42")]),
+                to("POST", &here, &[("origin", "http://[::ffff:7f00:1]:3000")]),
                 to("POST", &here, &[("origin", "http://[2001:db8::1]:8080")]),
             ];
             if !http2 {
