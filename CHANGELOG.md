@@ -43,6 +43,13 @@ HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
 - **Whitespace around a field value**, such as `x-tenant: acme<TAB>`, is refused over HTTP/2 and
   HTTP/3. HTTP/1.1 removes it, as before
   ([#25](https://github.com/viell-dev/slop-warded-server/issues/25)).
+- **The host:** a request with several `Host` fields or an invalid one is refused, and so is an
+  HTTP/1.1 request without one
+  ([#27](https://github.com/viell-dev/slop-warded-server/issues/27)). HTTP/1.0 needs none, and an
+  empty one says that the target has no host. When an HTTP/1 target names a host, as a proxy's
+  `GET http://example.com/ HTTP/1.1` does, the `Host` field that the application sees has that
+  host. Over HTTP/2 and HTTP/3, a `Host` field has to name the host of `:authority`, and a target
+  with user information, such as `user@example.com`, is refused on every protocol.
 
 ## 0.1.0-alpha.2 - 2026-11-25
 

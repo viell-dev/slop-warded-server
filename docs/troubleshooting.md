@@ -113,9 +113,15 @@ before the application saw it. Over HTTP/3 the request fails with `H3_MESSAGE_ER
 `debug` level, the log says `a malformed request was refused`, or `an HTTP/3 request ended early`,
 with the reason. Fix the client.
 
-| After `Malformed request:`                     | Cause                                                                                        |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `a field value begins or ends with whitespace` | A space or a tab around a value, such as `acme `, over HTTP/2 or HTTP/3; HTTP/1.1 removes it |
+| After `Malformed request:`                          | Cause                                                                                                               |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `a field value begins or ends with whitespace`      | A space or a tab around a value, such as `acme `, over HTTP/2 or HTTP/3; HTTP/1.1 removes it                        |
+| `the HTTP/1.1 request has no Host field`            | HTTP/1.1 requires one, also with a target such as `http://example.com/`                                             |
+| `the request has several Host fields`               | Two `Host` fields, also with the same value                                                                         |
+| `the Host field is not a valid host`                | A value that is not a host with an optional port, such as `example.com/x`, `user@example.com` or `example.com:http` |
+| `the request target names an invalid host`          | The same in the target or `:authority`, such as `http://user@example.com/`                                          |
+| `the Host field names another host than :authority` | An HTTP/2 or HTTP/3 client sent both, for different hosts                                                           |
+| `the request names no host`                         | An HTTP/2 or HTTP/3 request has neither `:authority` nor `Host`                                                     |
 
 ## A 400 or 500 from an extractor
 

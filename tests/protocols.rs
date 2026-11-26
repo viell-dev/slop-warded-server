@@ -753,3 +753,133 @@ async fn whitespace_around_a_field_value_is_malformed() {
     let reason = "Malformed request: a field value begins or ends with whitespace.\n";
     assert_eq!(text(response).await.unwrap(), reason);
 }
+
+/// An application that answers with the target and the `Host` fields that it sees.
+fn hosts() -> axum::Router {
+    axum::Router::new().fallback(|request: Request| async move {
+        let hosts = request.headers().get_all(header::HOST).iter();
+        let hosts: Vec<_> = hosts.map(|host| host.to_str().unwrap()).collect();
+        format!("{} {hosts:?}", request.uri())
+    })
+}
+
+#[tokio::test]
+async fn http1_requests_name_one_valid_host() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let authority = Authority::new();
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, hosts());
+    for (target, version, fields, expected) in [
+        ("/", "1.1", "Host: localhost\r\n", r#"/ ["localhost"]"#),
+        (
+            "/",
+            "1.1",
+            "Host: localhost:8080\r\n",
+            r#"/ ["localhost:8080"]"#,
+        ),
+        (
+            "/",
+            "1.1",
+            "Host: LOCALHOST.:8080\r\n",
+            r#"/ ["LOCALHOST.:8080"]"#,
+        ),
+        ("/", "1.1", "Host: [::1]:8080\r\n", r#"/ ["[::1]:8080"]"#),
+        // The target has no host.
+        ("/", "1.1", "Host:\r\n", r#"/ [""]"#),
+        ("/", "1.0", "", "/ []"),
+        // The target's host replaces the field's.
+        (
+            "http://localhost:8080/",
+            "1.1",
+            "Host: other.example\r\n",
+            r#"http://localhost:8080/ ["localhost:8080"]"#,
+        ),
+        (
+            "http://localhost:8080/",
+            "1.1",
+            "Host:\r\n",
+            r#"http://localhost:8080/ ["localhost:8080"]"#,
+        ),
+        ("http://localhost/", "1.0", "", "http://localhost/ []"),
+        // Refused by the server, before the application.
+        ("/", "1.1", "", "refused"),
+        ("/", "1.1", "Host: one\r\nHost: two\r\n", "refused"),
+        ("/", "1.1", "Host: one\r\nHost: one\r\n", "refused"),
+        ("/", "1.0", "Host: one\r\nHost: two\r\n", "refused"),
+        ("/", "1.1", "Host: not a host/x\r\n", "refused"),
+        ("/", "1.1", "Host: user@localhost\r\n", "refused"),
+        ("/", "1.1", "Host: localhost:abc\r\n", "refused"),
+        ("/", "1.1", "Host: [bogus]\r\n", "refused"),
+        ("http://localhost/", "1.1", "", "refused"),
+        (
+            "http://localhost/",
+            "1.1",
+            "Host: a\r\nHost: b\r\n",
+            "refused",
+        ),
+        (
+            "http://user@localhost/",
+            "1.1",
+            "Host: localhost\r\n",
+            "refused",
+        ),
+        // Refused by Hyper already: a value folded onto a second line.
+        ("/", "1.1", "Host: local\r\n host\r\n", "400"),
+    ] {
+        let request = format!("GET {target} HTTP/{version}\r\n{fields}Connection: close\r\n\r\n");
+        for tls in [false, true] {
+            let response = if tls {
+                let mut stream = common::tls(running.https, &authority, b"http/1.1")
+                    .await
+                    .unwrap();
+                stream.write_all(request.as_bytes()).await.unwrap();
+                let mut response = String::new();
+                common::soon(stream.read_to_string(&mut response))
+                    .await
+                    .unwrap();
+                response
+            } else {
+                common::cleartext(running.http.unwrap(), &request).await
+            };
+            let (head, body) = response.split_once("\r\n\r\n").unwrap();
+            let status = head.split(' ').nth(1).unwrap();
+            let actual = match status {
+                "200" => body,
+                "400" if body.starts_with("Malformed request: ") => "refused",
+                other => other,
+            };
+            assert_eq!(actual, expected, "TLS {tls}: {request:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_http2_host_field_names_the_host_of_the_authority() {
+    let authority = Authority::new();
+    let running = Running::start(common::server(&authority), hosts());
+    let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
+        .await
+        .unwrap();
+    for (fields, expected) in [
+        (&[][..], "https://localhost/ []"),
+        (&["localhost"], r#"https://localhost/ ["localhost"]"#),
+        (
+            &["LocalHost:443"],
+            r#"https://localhost/ ["LocalHost:443"]"#,
+        ),
+        (&["other.example"], "400 Bad Request"),
+        (&["localhost:8443"], "400 Bad Request"),
+        (&["user@localhost"], "400 Bad Request"),
+        (&[""], "400 Bad Request"),
+        (&["localhost", "localhost"], "400 Bad Request"),
+    ] {
+        let mut request = get("/");
+        for host in fields {
+            let host = HeaderValue::from_static(host);
+            request.headers_mut().append(header::HOST, host);
+        }
+        let actual = outcome(client.send(request).await).await;
+        assert_eq!(actual, expected, "{fields:?}");
+    }
+}

@@ -37,6 +37,19 @@ fn content_length(value: &str) -> Vec<u8> {
     field
 }
 
+/// A field with a literal name and value, each shorter than 127 bytes.
+fn field(name: &str, value: &str) -> Vec<u8> {
+    // The length of the name begins in the last three bits of the first byte.
+    let mut field = match name.len() {
+        length @ ..7 => vec![0x20 | length as u8],
+        length => vec![0x27, (length - 7).try_into().unwrap()],
+    };
+    field.extend_from_slice(name.as_bytes());
+    field.push(value.len().try_into().unwrap());
+    field.extend_from_slice(value.as_bytes());
+    field
+}
+
 /// Send bytes on a request stream, end it, and return everything the server sends back.
 async fn raw(quic: &quinn::Connection, bytes: &[u8]) -> Result<Vec<u8>, BoxError> {
     common::soon(async {
@@ -214,18 +227,28 @@ async fn a_malformed_http3_head_does_not_reach_the_application() {
     let authority = Authority::new();
     let running = Running::start(common::server(&authority), echo());
     let mut client = common::http3(running.https, &authority).await.unwrap();
-    // transfer-encoding: chunked, with a literal name and value.
-    let mut field = vec![0x27, 17 - 7];
-    field.extend_from_slice(b"transfer-encoding");
-    field.push(7);
-    field.extend_from_slice(b"chunked");
-    let two_lengths = [content_length("5"), content_length("6")].concat();
-    for more in [field, two_lengths, content_length("+5")] {
-        let bytes = [
-            headers_frame("POST", "/echo", &more),
+    let with_body = |more: &[u8]| {
+        [
+            headers_frame("POST", "/echo", more),
             frame(DATA, 5, b"hello"),
         ]
-        .concat();
+        .concat()
+    };
+    // The control: a Host field that names the host of :authority.
+    let response = raw(&client.quic, &with_body(&field("host", "localhost"))).await;
+    assert!(has_status(&response.unwrap(), StatusCode::OK));
+    let two = |one: Vec<u8>, other: Vec<u8>| [one, other].concat();
+    for more in [
+        field("transfer-encoding", "chunked"),
+        two(content_length("5"), content_length("6")),
+        content_length("+5"),
+        field("x-tenant", "acme "),
+        field("x-tenant", "\tacme"),
+        // h3 compares the first Host field with :authority.
+        two(field("host", "localhost"), field("host", "other.example")),
+        two(field("host", "localhost"), field("host", "localhost")),
+    ] {
+        let bytes = with_body(&more);
         assert!(raw(&client.quic, &bytes).await.is_err(), "{more:02x?}");
     }
     let response = common::send_http3(&mut client.send, get("/"))
