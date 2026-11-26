@@ -12,12 +12,17 @@ cd my-api
 cargo run
 ```
 
-Try it from another terminal:
+Open the address that the log names, `http://127.0.0.1:3000/`, for a list of the endpoints. Try
+them from another terminal:
 
 ```sh
-curl --insecure --json '{"text": "milk"}' https://localhost:8443/notes
-curl --insecure https://localhost:8443/notes/1
+curl --json '{"text": "milk"}' http://127.0.0.1:3000/notes
+curl http://127.0.0.1:3000/notes/1
 ```
+
+That is the [development address](./configuration.md#the-development-address), for this computer
+alone. HTTPS, with HTTP/2 and HTTP/3, answers at the same time, with a certificate that nothing
+trusts: `curl --insecure https://localhost:8443/notes`.
 
 ## What you get
 
@@ -26,7 +31,8 @@ curl --insecure https://localhost:8443/notes/1
 - `src/notes.rs`: an example resource, in memory. Replace it with yours.
 - `src/problem.rs`: errors as JSON.
 
-The routes are in one place, with the method as a condition:
+The routes are in one place, with the method as a condition. `DefaultMiddleware` logs each
+request, compresses responses, and answers a panic with a JSON error:
 
 <<< ../templates/api/src/routes.rs
 

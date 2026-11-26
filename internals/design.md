@@ -33,6 +33,8 @@ dependency for manifests, and warns in every project about ones that still hold 
 | TLS              | rustls with aws-lc-rs  | One implementation and certificate for TCP and QUIC          |
 | QUIC             | Quinn                  | Works with rustls; the most used                             |
 | HTTP/3           | h3                     | The only Rust implementation that fits the rest; see below   |
+| Live reload      | `tower-livereload`     | A small Tower layer, maintained, with no new dependencies    |
+| Helpers          | `tower-http`, `tracing-subscriber` | What Axum projects use already                   |
 
 Salvo supports all three protocols but has its own request and handler types, so Warded and Tower
 applications would need adapters. `tokio-quiche` has a more mature HTTP/3, but brings a second TLS
@@ -43,6 +45,77 @@ Reconsider h3 if it gets a defect that the server can neither work around nor li
 [known ones](../docs/limits.md#http-3) are tracked in
 [#2](https://github.com/viell-dev/slop-warded-server/issues/2). The dependency is confined to
 `src/http3.rs` and `src/http3/`.
+
+## Starting in the browser
+
+A new project should behave like one from `npm create vue`: open in a browser at once, reload after
+an edit, and hold code that is the user's own.
+
+### The development address
+
+The certificate that the server generates makes browsers warn, and breaks the live reload of tools
+such as cargo-leptos, whose script then uses `wss:`. A browser on the same computer needs no
+certificate on loopback: `http://127.0.0.1` and `http://localhost` are secure contexts. So the
+development address serves the application over cleartext, on loopback only. Anything else is
+refused rather than warned about, because a cleartext listener on a network address is how a
+development setting becomes a deployed one.
+
+- **Off unless asked for.** The library cannot tell development from deployment: a release build
+  runs on developers' computers too, and a debug build can be deployed. So the templates ask, with
+  `WARDED_DEV_ADDR` in `.cargo/config.toml`. Cargo gives it to the programs that it starts, and not
+  to a program started on its own; a variable that is set already wins, also an empty one. The
+  alternative, `if cfg!(debug_assertions)` in every `main`, repeats wiring in each project and
+  guesses from the profile. `cargo run --release` on a server still gets the address, which the
+  documentation warns about.
+- **A listener of its own**, beside `redirect_http` and `serve_http`, which are for clients on the
+  network or a proxy and keep their meaning.
+- **The IP address in the log**, rather than `localhost`, which some systems resolve to IPv6 first,
+  where an IPv4 listener refuses. Binding both families instead needs a second socket, which fails
+  where IPv6 is off, as in some containers.
+
+### Live reload
+
+`tower-livereload` adds a script to HTML pages, which keeps an event stream open, and reloads the
+page when the stream comes back after it was gone. A restart is what brings it back; the server
+does not watch files. It is applied by the library on the development address alone, so that HTTPS
+serves what a deployment serves.
+
+- **No compression there.** The script can only be added to an uncompressed page, and the
+  application can be any service, whose compression the library cannot reach into. So requests on
+  the development address ask for `identity`. Compression gains nothing on loopback.
+- **Only for pages that a browser opens** (`Sec-Fetch-Dest: document`, or none), so that HTML
+  fragments that scripts fetch stay as they are.
+- **The stream ends at shutdown.** Otherwise it is a request in progress, and Ctrl+C, or a watcher
+  that sends `SIGTERM`, waits for the whole grace period.
+- **`live_reload(false)`** turns it off for tools that bring their own, such as Vite or
+  cargo-leptos.
+
+Rebuilding and restarting is a watcher's job. [bacon](https://dystroy.org/bacon/) is the one the
+templates document. Its `run-long` job does exactly this, it installs with `cargo install` on Linux,
+macOS and Windows, and a `bacon.toml` in the project names the directories to watch beyond `src/`.
+watchexec 2.8 does the same, and stops the program with `SIGTERM` rather than killing it, but
+reads no project file that says what to watch and run, so every user would type it.
+
+### Thin helpers
+
+`init_logging`, `DefaultMiddleware`, `StaticFiles` and `SinglePageApp` replace wiring that the
+templates and guides repeated. Each is a few lines over `tracing-subscriber`, `tower-http`, Axum and
+Warded, with that library's behavior, and the layers stay usable on their own. They add no routing
+of their own: routes stay Warded's, and `into_service` and `any` stay, because hiding them would
+need another way to declare routes. They are default features, which a project that wires its own
+can turn off.
+
+- **`DefaultMiddleware` returns a boxed service**, so that `tower-http`'s types stay out of this
+  crate's API. Its tracing logs at `info`, which `init_logging` shows by default. Panics are logged
+  once, whatever the response.
+- **`init_logging` uses colours only in a terminal**, so that a journal or a file gets plain text.
+- **`StaticFiles` takes the prefix again**, which the route's pattern already has. Warded's captures
+  are kept by name, not by position, so the destination cannot find the rest of the path without a
+  name to agree on.
+- **`SinglePageApp` serves files at the top of the build before `index.html`**, so that a browser
+  that opens `/favicon.svg` gets it. Files in `assets/` are kept for a year, unless they are
+  missing, which a later build may change, or HTML, which keeps its name. That is decided by the
+  path, so it also holds for a 304.
 
 ## The HTTP/3 bridge is our own
 

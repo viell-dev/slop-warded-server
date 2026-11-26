@@ -19,6 +19,10 @@ system that built it, and on Linux the same or a newer C library. Projects from 
 template also need their `static/` directory beside where they are started; pages are part of the
 program.
 
+Start the program itself, and not `cargo run`. The templates' `.cargo/config.toml` gives every
+program that Cargo starts a [development address](./configuration.md#the-development-address), which
+is for a browser on the same computer.
+
 ## Open the ports
 
 | Port | Protocol | For                                |

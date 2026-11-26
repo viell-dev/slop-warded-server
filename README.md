@@ -26,22 +26,28 @@ cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.2
 It asks which template to use and what to call the project. To skip the first question, name the
 template: `cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.2`.
 
-| Template            | What you get                                                           |
-| ------------------- | ---------------------------------------------------------------------- |
-| `templates/minimal` | One route and nothing else                                             |
-| `templates/api`     | A JSON API with state, errors, logging, compression and tests          |
-| `templates/website` | HTML pages in two languages, static files, logging, compression, tests |
+| Template            | What you get                                                             |
+| ------------------- | ------------------------------------------------------------------------ |
+| `templates/minimal` | One route and nothing else                                               |
+| `templates/api`     | A JSON API with state, errors, logging, compression and tests            |
+| `templates/website` | A small site: pages with a menu, a form, static files, logging and tests |
 
-Then run it:
+Then run it, and open the address that it logs, `http://127.0.0.1:3000/`:
 
 ```sh
 cargo run
-curl --insecure https://localhost:8443/
 ```
 
-Add `--http2` or, with a curl that supports it, `--http3-only`. The `api` template answers below
-`/notes`. Without a certificate the server generates one that no client trusts, hence `--insecure`.
-[Getting started] explains the steps, and how to add the server to a project of your own.
+That address is plain HTTP for a browser on this computer, without a certificate warning, and its
+pages reload when the server restarts. HTTPS, with HTTP/2 and HTTP/3, runs beside it:
+
+```sh
+curl --insecure --http2 https://localhost:8443/
+```
+
+Without a certificate the server generates one that no client trusts, hence `--insecure`.
+[Getting started] explains the steps, how to restart the server after each change, and how to add
+the server to a project of your own.
 
 ## Example
 
@@ -80,6 +86,10 @@ Warded routes. `warded_server::app` turns Warded routes into an `axum::Router`, 
   known, `Content-Length`.
 - **Streaming both ways**, with trailers, and errors that a client cannot mistake for the end.
 - **Redirects from HTTP**, or the application itself on the cleartext listener.
+- **A development address** over plain HTTP on loopback, whose pages reload when the server
+  restarts.
+- **Helpers for a start:** logging, default middleware, static files and single-page apps, over
+  `tracing-subscriber`, `tower-http` and Axum.
 - **Certificate reload** for new connections of all protocols, with `SIGHUP` on Unix or
   `Tls::reload`.
 - **Graceful shutdown** on Ctrl+C or `SIGTERM`: requests in progress finish within a grace period,

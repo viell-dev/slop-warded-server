@@ -5,7 +5,49 @@ description: "Add logging, compression, panic handling, timeouts, body limits an
 # Middleware
 
 `warded_server::app` returns an `axum::Router`, so any Tower layer for Axum works. The `api` and
-`website` templates start with these, from the outside in:
+`website` templates start with `DefaultMiddleware`:
+
+```rust
+use axum::{body::Body, handler::HandlerWithoutStateExt, http::Request};
+use tower::ServiceExt;
+use warded_server::{
+    DefaultMiddleware,
+    warded::{
+        Matcher, Router,
+        matchers::{exact_path, get},
+    },
+};
+
+async fn broken() -> &'static str {
+    panic!("a mistake")
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let routes = Router::new().route(get().and(exact_path("/")), broken.into_service());
+    let app = warded_server::app(routes).layer(DefaultMiddleware::new());
+
+    let request = Request::builder().uri("/").body(Body::empty())?;
+    let response = app.oneshot(request).await?;
+    assert_eq!(response.status(), 500);
+    Ok(())
+}
+```
+
+It is these layers from `tower-http`, from the outside in:
+
+- **`TraceLayer`** logs each request at the `info` level, with its method, URI, protocol, status and
+  duration, and server errors at `error`.
+- **`CompressionLayer`** compresses responses with Brotli or gzip for clients that accept them. Give
+  it [handlers as services](#the-response-to-head), as here and in the templates.
+- **`CatchPanicLayer`** turns a panic into a 500, and logs it. Without it the request fails without
+  a response; other requests are not affected either way. `on_panic` chooses the response, as the
+  `api` template does for a JSON error and the `website` template for an error page:
+  `DefaultMiddleware::new().on_panic(problem::panicked)`.
+
+### The same by hand
+
+To choose other layers, or another order, use them yourself:
 
 ```rust
 use axum::{body::Body, handler::HandlerWithoutStateExt, http::Request};
@@ -36,11 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-- **`TraceLayer`** logs each request with its method, URI, protocol, status and duration.
-- **`CompressionLayer`** compresses responses that clients accept compressed. Give it [handlers as
-  services](#the-response-to-head), as here and in the templates.
-- **`CatchPanicLayer`** turns a panic into a 500. Without it the request fails without a response;
-  other requests are not affected either way.
+`TraceLayer::new_for_http()` logs at the `debug` level, so its requests show with
+`RUST_LOG=info,tower_http=debug`.
 
 ## Where to put a layer
 
@@ -149,8 +188,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-In a template's `ServiceBuilder`, put them before `CatchPanicLayer`, so that the responses it makes
-have them too.
+Add them after `DefaultMiddleware`, as in `app.layer(DefaultMiddleware::new()).layer(headers)`, so
+that they are outside it, and the responses to panics have them too.
 
 `Strict-Transport-Security` tells browsers to use only HTTPS with your host name for as long as it
 says. Add it once HTTPS works for good, and never while you develop on `localhost`, where it would

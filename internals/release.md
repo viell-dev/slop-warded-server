@@ -15,6 +15,8 @@ still change.
 6. Run the Pages workflow on `main` with the tag: `gh workflow run pages.yml -f tag=<version>`. Check
    `version.json`, the guides and the API reference on the site.
 7. In an empty directory, follow the site's commands with the tag, and run each generated project.
+   Open the website's development address in a browser, and see a page reload after an edit with
+   `bacon run-long`.
 
 A tag is never moved. Fix a faulty release with a new version.
 
