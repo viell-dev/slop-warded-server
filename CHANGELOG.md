@@ -54,10 +54,14 @@ over HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
 - **Response lengths** ([#28](https://github.com/viell-dev/slop-warded-server/issues/28)): a
   `Content-Length` that the application set for content of known length, and that was not its
   length, made debug builds panic over HTTP/1.1, with no response, and release builds send the
-  false length. The length of the content now replaces it, and the log warns. A
-  `Transfer-Encoding` beside a length goes, which closed HTTP/1.1 connections without a response.
-  Repeated equal `Content-Length` fields become one, where HTTP/1.1 sent no response to HEAD.
-  Invalid ones for content of unknown length go, with a warning.
+  false length. The length of the content now replaces it, and the log warns. Over HTTP/1.1, a
+  `Transfer-Encoding` that the application sets frames the content instead, with its trailers and
+  codings, and a `Content-Length` beside it goes, such as Axum's handlers add: Hyper closed the
+  connection over both without a response. HTTP/2 and HTTP/3 have no `Transfer-Encoding`, and the
+  length applies. Repeated equal `Content-Length` fields become one, where HTTP/1.1 sent no
+  response to HEAD. Invalid ones for content of unknown length go, with a warning. Informational
+  responses, and successful ones to CONNECT, lose their content and the fields that would frame it,
+  which made Hyper panic or close the connection.
 
 ## 0.1.0-alpha.2 - 2026-11-25
 
