@@ -50,13 +50,15 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 - **The browser warns about the certificate.** It is the generated one. Open the address that the
   log names with `open http://…` instead, or see [certificates for
   development](./certificates.md#for-development).
-- **A 403 that says `The development address answers only requests for an IP address or
-  localhost`.** The browser used another name for this computer, such as one from the hosts file.
-  Open the address that the log names, or a name below `.localhost`; see [the development
-  address](./configuration.md#the-development-address).
+- **A 403 that says `The development address answers only requests for this computer by a loopback
+  address or localhost`.** The browser used another name or address for this computer, such as one
+  from the hosts file or `0.0.0.0`. Open the address that the log names, or a name below
+  `.localhost`; see [the development address](./configuration.md#the-development-address).
 - **A 403 that says `The development address answers no requests that other sites make`.** A page
   from another site, or another origin, sent the request. Load the page from the development
-  address itself.
+  address itself. Under `Referrer-Policy: no-referrer`, a browser may send the page's own form with
+  `Origin: null`, which is refused unless the browser also sends `Sec-Fetch-Site: same-origin`; use
+  another policy, such as `same-origin`.
 - **The log names no `http://` address.** The project has no
   [development address](./configuration.md#the-development-address): its `.cargo/config.toml` is
   missing, it was started without Cargo, or `WARDED_DEV_ADDR` is set to something else.
@@ -90,6 +92,11 @@ Check in this order:
   never do, also where the project is inside an ignored directory of another repository.
 - **A script fetched it.** The reload script is added to pages that the browser opens, and not to
   HTML that scripts fetch, or that is compressed already.
+- **A `Content-Security-Policy` blocks the script.** The reload script is inline, so a policy whose
+  scripts may come only from files, such as the [middleware guide's](./middleware.md)
+  `default-src 'self'`, blocks it; the browser's console says so. Turn live reload off with
+  `live_reload(false)` and reload by hand, or allow inline scripts, as with
+  `script-src 'self' 'unsafe-inline'`, only in development.
 
 ## A 404 that should not be
 

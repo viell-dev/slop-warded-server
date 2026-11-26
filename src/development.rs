@@ -92,7 +92,7 @@ fn uncompressed(mut request: Request) -> Request {
 /// Why the development address refuses a request.
 #[derive(Debug, PartialEq)]
 enum Refusal {
-    /// It names another host than an IP address or `localhost`, or none.
+    /// It names another host than this computer, or none.
     Host(String),
     /// Another site's page made the browser send it.
     OtherSite(String),
@@ -104,18 +104,21 @@ enum Refusal {
 /// whose DNS answer changes to `127.0.0.1` makes them look as if they came from that page's own
 /// site (DNS rebinding). The development address therefore answers only these:
 ///
-/// - **For an IP address or `localhost`.** Every authority of the request, the target's and the
-///   `Host` field's, names an IP address, `localhost`, or a name below `.localhost`. Rebinding needs
-///   a name that the attacker's DNS answers, and browsers answer `localhost` themselves.
+/// - **For this computer.** Every authority of the request, the target's and the `Host` field's,
+///   names a loopback address, `localhost`, or a name below `.localhost`. Rebinding needs a name
+///   that the attacker's DNS answers, and browsers answer `localhost` themselves. Other addresses,
+///   such as `0.0.0.0`, which also reaches this computer, are not secure contexts, so browsers send
+///   no Fetch Metadata there. The listener is on loopback, so only forwarding brings them here.
 /// - **Not made by other sites.** Following Fetch Metadata's resource isolation policy, a request
 ///   that the browser marks as `Sec-Fetch-Site: cross-site` is refused, unless it opens a page with
 ///   GET or HEAD, and not into `<object>` or `<embed>`. Clients that send no such field, such as
 ///   curl, are not affected.
 /// - **Not changes from other origins.** A request with another method than GET, HEAD, OPTIONS or
 ///   TRACE, or that asks to upgrade the connection, as WebSockets do, is refused when its `Origin`
-///   is not on this computer: a loopback address, `localhost`, or a name below `.localhost`. This
-///   also covers browsers without Fetch Metadata. Any IP address will not do here, since a page can
-///   come from a server's.
+///   is not on this computer, as above. Any IP address will not do here, since a page can come from
+///   a server's. This covers browsers without Fetch Metadata. A request that the browser marks as
+///   `Sec-Fetch-Site: same-origin` is not checked: pages cannot set that field, and a page's own
+///   form sends `Origin: null` under `Referrer-Policy: no-referrer`.
 fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
     // `fields::check_request` has refused several Host fields already.
     let host = headers
@@ -126,7 +129,7 @@ fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
         return Some(Refusal::Host("none".to_owned()));
     }
     for authority in host.as_deref().into_iter().chain(target) {
-        if fixed_host(authority).is_none() {
+        if !is_this_computer(authority) {
             return Some(Refusal::Host(authority.to_owned()));
         }
     }
@@ -150,7 +153,10 @@ fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
         *method,
         Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
     ) || headers.contains_key(UPGRADE);
-    if let Some(origin) = headers.get(ORIGIN).filter(|_| changes) {
+    // Only the browser sets `Sec-Fetch-Site`. Another client can send it with any `Origin`, but
+    // could send any `Origin` without it as well, so trusting the field gives away nothing.
+    let same_origin = field("sec-fetch-site") == Some("same-origin");
+    if let Some(origin) = headers.get(ORIGIN).filter(|_| changes && !same_origin) {
         let from_here = origin
             .to_str()
             .ok()
@@ -170,47 +176,33 @@ fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
     None
 }
 
-/// A host that no other site's DNS can change.
-#[derive(Debug, PartialEq)]
-enum FixedHost {
-    Address(IpAddr),
-    /// `localhost`, or a name below `.localhost`, which browsers answer themselves.
-    Localhost,
-}
-
-/// The host of an authority, such as `localhost:3000`, if no other site's DNS can change it: an IP
-/// address, `localhost`, or a name below `.localhost`, with any port.
-fn fixed_host(authority: &str) -> Option<FixedHost> {
-    let authority = authority.parse::<Authority>().ok()?;
+/// Whether an authority, such as `localhost:3000`, names this computer, with any port: a loopback
+/// address, also as an IPv4-mapped one, `localhost`, or a name below `.localhost`, which browsers
+/// answer themselves. No other site's DNS can change these.
+fn is_this_computer(authority: &str) -> bool {
+    let Ok(authority) = authority.parse::<Authority>() else {
+        return false;
+    };
     if authority.as_str().contains('@') {
-        return None;
+        return false;
     }
     let host = authority.host();
     let host = host.strip_suffix('.').unwrap_or(host);
-    if let Some(address) = host
+    let address = match host
         .strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
     {
-        return address
-            .parse::<Ipv6Addr>()
-            .ok()
-            .map(|address| FixedHost::Address(address.into()));
+        Some(address) => address.parse::<Ipv6Addr>().ok().map(IpAddr::from),
+        None => host.parse::<Ipv4Addr>().ok().map(IpAddr::from),
+    };
+    if let Some(address) = address {
+        return address.to_canonical().is_loopback();
     }
-    if let Ok(address) = host.parse::<Ipv4Addr>() {
-        return Some(FixedHost::Address(address.into()));
+    if host.starts_with('[') {
+        return false;
     }
     let host = host.to_ascii_lowercase();
-    (host == "localhost" || host.ends_with(".localhost")).then_some(FixedHost::Localhost)
-}
-
-/// Whether an authority names this computer: a loopback address, also as an IPv4-mapped one,
-/// `localhost`, or a name below `.localhost`.
-fn is_this_computer(authority: &str) -> bool {
-    match fixed_host(authority) {
-        Some(FixedHost::Address(address)) => address.to_canonical().is_loopback(),
-        Some(FixedHost::Localhost) => true,
-        None => false,
-    }
+    host == "localhost" || host.ends_with(".localhost")
 }
 
 async fn refuse_other_sites(
@@ -225,8 +217,8 @@ async fn refuse_other_sites(
         Refusal::Host(host) => {
             tracing::warn!(%host, "the development address refused a request for another host");
             format!(
-                "The development address answers only requests for an IP address or localhost, \
-                 which no other site can point at this computer. Open {open} instead.\n"
+                "The development address answers only requests for this computer by a loopback \
+                 address or localhost, which no other site can point here. Open {open} instead.\n"
             )
         }
         Refusal::OtherSite(site) => {
@@ -318,23 +310,33 @@ mod tests {
     }
 
     #[test]
-    fn only_names_that_no_other_site_controls_are_fixed() {
+    fn only_loopback_addresses_and_localhost_are_this_computer() {
         for authority in [
             "127.0.0.1",
-            "127.0.0.1:3000",
+            "127.0.0.1:5173",
             "127.0.0.1.:3000",
-            "[::1]:3000",
-            "192.0.2.1",
+            "127.0.0.2",
+            "[::1]:5173",
+            "[::ffff:127.0.0.1]:5173",
             "localhost",
             "LOCALHOST:3000",
             "localhost.:3000",
-            "app.localhost:3000",
+            "localhost:5173",
+            "app.localhost",
             "App.LocalHost.",
         ] {
-            assert!(fixed_host(authority).is_some(), "{authority}");
+            assert!(is_this_computer(authority), "{authority}");
         }
         for authority in [
             "",
+            "192.0.2.42",
+            "192.0.2.42:3000",
+            "192.168.1.20:3000",
+            "0.0.0.0:3000",
+            "[2001:db8::1]",
+            "[::ffff:192.0.2.42]",
+            "[::]",
+            "[::]:3000",
             "attacker.example",
             "attacker.example.:3000",
             "localhost.attacker.example",
@@ -343,32 +345,8 @@ mod tests {
             "user@localhost",
             "[::1",
             "[fe80::1%25eth0]",
+            "[localhost]",
             "127.1",
-        ] {
-            assert_eq!(fixed_host(authority), None, "{authority}");
-        }
-    }
-
-    #[test]
-    fn only_loopback_addresses_and_localhost_are_this_computer() {
-        for authority in [
-            "127.0.0.1:5173",
-            "127.0.0.2",
-            "[::1]:5173",
-            "[::ffff:127.0.0.1]:5173",
-            "localhost:5173",
-            "app.localhost",
-        ] {
-            assert!(is_this_computer(authority), "{authority}");
-        }
-        for authority in [
-            "192.0.2.42",
-            "192.0.2.42:3000",
-            "0.0.0.0:3000",
-            "[2001:db8::1]",
-            "[::ffff:192.0.2.42]",
-            "[::]",
-            "attacker.example",
         ] {
             assert!(!is_this_computer(authority), "{authority}");
         }
@@ -392,6 +370,7 @@ mod tests {
         let host = ("host", "localhost:3000");
         let cross = ("sec-fetch-site", "cross-site");
         let navigate = ("sec-fetch-mode", "navigate");
+        let same_origin = ("sec-fetch-site", "same-origin");
         for (method, fields) in [
             (Method::GET, vec![host]),
             (Method::GET, vec![host, ("sec-fetch-site", "same-origin")]),
@@ -414,6 +393,14 @@ mod tests {
             (
                 Method::GET,
                 vec![host, ("origin", "https://attacker.example")],
+            ),
+            // The site's own form under `Referrer-Policy: no-referrer`, as Chromium sends it.
+            (Method::POST, vec![host, ("origin", "null"), same_origin]),
+            // No browser sends this, since pages cannot set `Sec-Fetch-Site`. Other clients can
+            // send any origin anyway, so the rule does not refuse it either.
+            (
+                Method::POST,
+                vec![host, ("origin", "http://attacker.example"), same_origin],
             ),
         ] {
             assert_eq!(
@@ -439,6 +426,11 @@ mod tests {
                 vec![host, ("origin", "https://attacker.example")],
             ),
             (Method::DELETE, vec![host, ("origin", "null")]),
+            (Method::POST, vec![host, ("origin", "null")]),
+            (
+                Method::POST,
+                vec![host, ("origin", "null"), ("sec-fetch-site", "same-site")],
+            ),
             (Method::PUT, vec![host, ("origin", "file:///home")]),
             // A page can come from any server's IP address.
             (Method::POST, vec![host, ("origin", "http://192.0.2.42")]),
@@ -474,6 +466,9 @@ mod tests {
     #[test]
     fn every_authority_must_be_this_computer() {
         assert_eq!(check(Method::GET, "http://localhost:3000/", &[]), None);
+        for host in ["127.0.0.1:3000", "[::1]:3000", "[::ffff:127.0.0.1]:3000"] {
+            assert_eq!(check(Method::GET, "/", &[("host", host)]), None, "{host}");
+        }
         for (uri, fields) in [
             ("/", vec![]),
             ("/", vec![("host", "attacker.example")]),
@@ -483,6 +478,12 @@ mod tests {
             // stays as defence in depth.
             ("http://localhost/", vec![("host", "attacker.example")]),
             ("http://attacker.example/", vec![("host", "localhost")]),
+            // IP addresses that are not loopback, which only forwarding could bring here.
+            ("/", vec![("host", "0.0.0.0:3000")]),
+            ("/", vec![("host", "[::]:3000")]),
+            ("/", vec![("host", "192.168.1.20:3000")]),
+            ("/", vec![("host", "[::ffff:192.0.2.42]:3000")]),
+            ("http://0.0.0.0:3000/", vec![]),
         ] {
             let refused = check(Method::GET, uri, &fields);
             assert!(

@@ -274,6 +274,12 @@ async fn other_sites_are_refused_on_the_development_address() {
                     &[],
                 ),
                 to("GET", &format!("http://127.0.0.1.nip.io:{port}/"), &[]),
+                // Addresses that are not loopback. Chromium sends no Fetch Metadata to
+                // `http://0.0.0.0`, which is not a secure context, so a script from another site
+                // could otherwise read from it.
+                to("GET", &format!("http://0.0.0.0:{port}/"), &[]),
+                to("GET", &format!("http://[::]:{port}/"), &[]),
+                to("GET", &format!("http://192.168.1.20:{port}/"), &[]),
                 to(
                     "GET",
                     &format!("http://attacker.example:{port}{EVENTS}"),
@@ -288,6 +294,12 @@ async fn other_sites_are_refused_on_the_development_address() {
                 to("POST", &here, &[cross, navigate]),
                 to("POST", &here, &[("origin", "https://attacker.example")]),
                 to("DELETE", &here, &[("origin", "null")]),
+                to("POST", &here, &[("origin", "null")]),
+                to(
+                    "POST",
+                    &here,
+                    &[("origin", "null"), ("sec-fetch-site", "same-site")],
+                ),
                 // A page can come from any server's IP address.
                 to("POST", &here, &[("origin", "http://192.0.2.42")]),
                 to("POST", &here, &[("origin", "http://[2001:db8::1]:8080")]),
@@ -324,6 +336,13 @@ async fn other_sites_are_refused_on_the_development_address() {
                 to("GET", &here, &[("origin", "https://attacker.example")]),
                 to("POST", &here, &[("origin", "http://127.0.0.1:5173")]),
                 to("POST", &here, &[("sec-fetch-site", "same-origin")]),
+                to("GET", &format!("http://[::ffff:127.0.0.1]:{port}/"), &[]),
+                // The site's own form, under `Referrer-Policy: no-referrer`, from Chromium.
+                to(
+                    "POST",
+                    &here,
+                    &[("origin", "null"), ("sec-fetch-site", "same-origin")],
+                ),
             ] {
                 let what = format!("{case}: {} {:?}", request.uri(), request.headers());
                 let response = client.send(request).await.unwrap();

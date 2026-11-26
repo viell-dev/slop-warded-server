@@ -80,10 +80,11 @@ IPv6 first. Things to know about it:
 - **Only for this computer, also in the browser.** Any page in the browser can make it send
   requests to this address, so the address answers 403 to those that another site could have
   caused:
-  - **for another host** than an IP address, `localhost` or a name below `.localhost`, such as
+  - **for another host** than a loopback address, `localhost` or a name below `.localhost`, such as
     `app.localhost`. Another site's DNS name can lead to `127.0.0.1` (DNS rebinding), and so do
-    names in the hosts file, which are refused too. Open the address that the log names, or use a
-    name below `.localhost`.
+    names in the hosts file, which are refused too. So are other IP addresses, such as `0.0.0.0`,
+    which browsers do not treat as secure, and send no `Sec-Fetch-Site`. Open the address that the
+    log names, or use a name below `.localhost`.
   - **from another site**, as the browser says with `Sec-Fetch-Site: cross-site`, unless the request
     opens a page with GET or HEAD. Links to the address from elsewhere work; scripts, forms that
     send POST, and `<object>` or `<embed>` on other sites do not.
@@ -93,7 +94,9 @@ IPv6 first. Things to know about it:
     `http://localhost:5173` may send them to `http://localhost:3000`, which the browser counts as
     the same site, but not to `http://127.0.0.1:3000`, which is another site to it. A development
     server's proxy, such as Vite's, passes the browser's same-origin requests on and is not
-    affected.
+    affected. Requests that the browser marks as `Sec-Fetch-Site: same-origin` are not checked,
+    since pages cannot set that field: a page's own form sends `Origin: null` when its
+    `Referrer-Policy` is `no-referrer`.
 
   curl and other clients that send none of these fields are not affected. Each refusal is logged
   as a warning.
@@ -102,8 +105,9 @@ IPv6 first. Things to know about it:
 - **HTML pages reload by themselves** when the server starts again. Each page that a browser opens
   there gets a small script, which waits on an event stream at `/_tower-livereload/event-stream`
   for the server to go away and come back. Fragments that scripts fetch do not get it. Responses are
-  not compressed there, so that the script can be added. Turn it off with `live_reload(false)`, for
-  tools that bring their own, such as Vite or cargo-leptos.
+  not compressed there, so that the script can be added. A `Content-Security-Policy` that allows no
+  inline scripts blocks it. Turn it off with `live_reload(false)`, for tools that bring their own,
+  such as Vite or cargo-leptos; compression then applies again.
 - **It is apart from `WARDED_HTTP_ADDR` and `serve_http`**, and can be used with either.
 
 In a project from a template, `.cargo/config.toml` sets the variable for the programs that Cargo

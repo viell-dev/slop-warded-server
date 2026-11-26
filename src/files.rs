@@ -7,7 +7,7 @@ use axum::{
 };
 use std::{
     convert::Infallible,
-    path::PathBuf,
+    path::{Path, PathBuf},
     task::{Context, Poll},
 };
 use tower::{Service, util::MapResponseLayer};
@@ -19,6 +19,10 @@ use tower_http::services::ServeDir;
 /// requests, from `tower-http`'s `ServeDir`. Paths that would leave the directory, such as ones
 /// with `..`, find no file. Responses to HEAD have the head of an uncompressed response, also where
 /// GET gets a compressed one.
+///
+/// Only files are served. A path to a directory finds no file, with or without a slash at the end,
+/// also when the directory has an `index.html`: ask for that by its name. `ServeDir` alone would
+/// redirect to the path with a slash, without the prefix, which leads to another page.
 ///
 /// ```
 /// use warded_server::{
@@ -59,7 +63,7 @@ impl StaticFiles {
     pub fn new(prefix: &str, directory: impl Into<PathBuf>) -> Self {
         check_prefix(prefix);
         let (prefix, directory) = (prefix.to_owned(), directory.into());
-        let router = axum::Router::new().nest_service(&prefix, ServeDir::new(&directory));
+        let router = axum::Router::new().nest_service(&prefix, files(&directory));
         Self {
             prefix,
             directory,
@@ -79,7 +83,7 @@ impl StaticFiles {
         let page = axum::Router::new()
             .fallback_service(page)
             .layer(MapResponseLayer::new(not_found as fn(Response) -> Response));
-        let files = ServeDir::new(&self.directory).fallback(page.clone());
+        let files = files(&self.directory).fallback(page.clone());
         self.router = axum::Router::new()
             .nest_service(&self.prefix, files)
             // For a route whose path does not begin with the prefix.
@@ -100,6 +104,12 @@ impl Service<Request> for StaticFiles {
     fn call(&mut self, request: Request) -> Self::Future {
         self.router.call(request)
     }
+}
+
+/// The files in `directory`, and no directories: `ServeDir` would redirect `/docs` to `/docs/`
+/// with the path that it sees, which is without the prefix.
+fn files(directory: &Path) -> ServeDir {
+    ServeDir::new(directory).append_index_html_on_directories(false)
 }
 
 fn not_found(mut response: Response) -> Response {

@@ -25,8 +25,10 @@ escapes values, so text from visitors cannot add markup.
 
 `StaticFiles` serves the directory below `/static/`, and the site's page for a 404 where there is no
 file. It uses `ServeDir` from `tower-http`, which sends content types and `Last-Modified`, answers
-range requests, and finds no file for paths that would leave the directory. It reads from the
-directory where the server is started, so copy `static/` along when you [deploy](./deployment.md).
+range requests, and finds no file for paths that would leave the directory. It serves files and
+not directories: `/static/docs/` is a 404 even with a `static/docs/index.html`, which is at
+`/static/docs/index.html`. It reads from the directory where the server is started, so copy
+`static/` along when you [deploy](./deployment.md).
 
 To let browsers keep files without asking again, put a version in their names, such as
 `style.3f9a.css`, and change the name whenever the file changes. Build tools such as Vite do both,

@@ -127,6 +127,9 @@ fn site_files() -> tempfile::TempDir {
         "main { margin: auto }",
     )
     .unwrap();
+    // A directory, which is not served, even with an `index.html` in it.
+    std::fs::create_dir(root.path().join("static/docs")).unwrap();
+    std::fs::write(root.path().join("static/docs/index.html"), "<p>Docs").unwrap();
     std::fs::write(root.path().join("secret.txt"), "secret").unwrap();
     root
 }
@@ -163,6 +166,10 @@ async fn static_files_are_served_and_stay_in_their_directory() {
             get_or_head().and(path("/plain/{*file}").unwrap()),
             files.clone(),
         )
+        .route(
+            get_or_head().and(path("/bare/{*file}").unwrap()),
+            StaticFiles::new("/bare", root.path().join("static")),
+        )
         // A prefix that is not the one of the files.
         .route(
             get_or_head().and(path("/other/{*file}").unwrap()),
@@ -178,12 +185,24 @@ async fn static_files_are_served_and_stay_in_their_directory() {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "text/css");
         assert_eq!(text(response).await.unwrap(), "main { margin: auto }");
+        for path in ["/static/docs/index.html", "/bare/docs/index.html"] {
+            let response = client.get(path).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{version:?} {path}");
+            assert_eq!(
+                text(response).await.unwrap(),
+                "<p>Docs",
+                "{version:?} {path}"
+            );
+        }
 
         let mut missing = escapes("/static");
         missing.extend(
             [
                 "/static/none.css",
                 "/static/",
+                // A directory is not redirected, which would lead outside the prefix.
+                "/static/docs",
+                "/static/docs/",
                 "/static/static/style.css",
                 "/other/style.css",
             ]
@@ -199,8 +218,10 @@ async fn static_files_are_served_and_stay_in_their_directory() {
             assert_eq!(text(response).await.unwrap(), MISSING, "{version:?} {path}");
         }
 
-        // Without a page of its own, below another prefix than the route's.
-        for path in escapes("/plain") {
+        // Without a page of its own: below another prefix than the route's, and directories.
+        let mut missing = escapes("/plain");
+        missing.extend(["/bare/docs", "/bare/docs/"].map(String::from));
+        for path in missing {
             let response = client.get(&path).await.unwrap();
             assert_eq!(
                 response.status(),

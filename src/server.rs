@@ -109,14 +109,15 @@ impl Server {
     /// Any page in the browser can make it send requests to this address, so before the
     /// application sees a request, the address refuses with a 403, and logs a warning:
     ///
-    /// - a request for another host than an IP address, `localhost` or a name below `.localhost`,
-    ///   which keeps out other sites whose DNS names point here (DNS rebinding). Names from the
-    ///   hosts file are refused too;
+    /// - a request for another host than a loopback address, `localhost` or a name below
+    ///   `.localhost`, which keeps out other sites whose DNS names point here (DNS rebinding).
+    ///   Names from the hosts file, and other IP addresses such as `0.0.0.0`, are refused too;
     /// - a request that the browser marks as made by another site (`Sec-Fetch-Site: cross-site`),
     ///   unless it opens a page with GET or HEAD, and not into `<object>` or `<embed>`;
     /// - a request with another method than GET, HEAD, OPTIONS or TRACE, or a WebSocket, whose
     ///   `Origin` is not on this computer (a loopback address, `localhost` or a name below it),
-    ///   which also covers browsers that do not send `Sec-Fetch-Site`.
+    ///   which also covers browsers that do not send `Sec-Fetch-Site`. Requests that the browser
+    ///   marks as `Sec-Fetch-Site: same-origin` are not checked, since pages cannot set it.
     ///
     /// Clients that send none of these fields and name the host as above, such as curl, are not
     /// affected.
