@@ -35,7 +35,10 @@
 //! Its head is well-formed: the server answers a request that the HTTP specifications call
 //! malformed with a 400, or over HTTP/3 a stream error, before the application and its routes see
 //! it. No field value begins or ends with a space or a tab, which HTTP/1.1 removes and HTTP/2 and
-//! HTTP/3 rule out.
+//! HTTP/3 rule out. A request has one `Host` field at most, which is a valid host, or empty over
+//! HTTP/1 for a target without one. HTTP/1.1 requests have one, and when the target names a host,
+//! as in `GET http://example.com/ HTTP/1.1`, the field has the target's host. Over HTTP/2 and
+//! HTTP/3, it names the same host as the URI.
 //!
 //! # Starting points
 //!
