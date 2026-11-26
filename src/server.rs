@@ -115,8 +115,8 @@ impl Server {
     /// - a request that the browser marks as made by another site (`Sec-Fetch-Site: cross-site`),
     ///   unless it opens a page with GET or HEAD, and not into `<object>` or `<embed>`;
     /// - a request with another method than GET, HEAD, OPTIONS or TRACE, or a WebSocket, whose
-    ///   `Origin` is not on this computer (a loopback address, `localhost` or a name below it), for
-    ///   browsers that do not send `Sec-Fetch-Site`.
+    ///   `Origin` is not on this computer (a loopback address, `localhost` or a name below it),
+    ///   which also covers browsers that do not send `Sec-Fetch-Site`.
     ///
     /// Clients that send none of these fields and name the host as above, such as curl, are not
     /// affected.
