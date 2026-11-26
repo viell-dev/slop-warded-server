@@ -35,14 +35,15 @@ fn has_outer_whitespace(value: &HeaderValue) -> bool {
 
 /// Check that the request names one valid host.
 ///
-/// - HTTP/1: one `Host` field at most, which HTTP/1.1 requires, and which is a host or empty when
-///   the target does not name one (RFC 9112 section 3.2). An empty value is how a client says that
-///   the target has no host.
-/// - HTTP/2 and HTTP/3: `:authority` or a `Host` field, and the same host in both when the request
-///   has both (RFC 9113 section 8.3.1, RFC 9114 section 4.3.1). h3 compares the first `Host` field
-///   only, and Hyper none.
-/// - No target with user information, which RFC 9110 section 4.2.4 says to treat as an error, and
-///   which RFC 9113 and RFC 9114 rule out.
+/// - HTTP/1: one `Host` field at most, which HTTP/1.1 requires, and which is a host, or empty to say
+///   that the target has none (RFC 9112 section 3.2). When the target names a host, it replaces the
+///   field's (section 3.2.2), which has to be valid all the same.
+/// - HTTP/2 and HTTP/3: the same host in `:authority` and a `Host` field when the request has both
+///   (RFC 9113 section 8.3.1, RFC 9114 section 4.3.1). h3 compares the first `Host` field only, and
+///   Hyper none. HTTP/3 requires one of them, which h3 checks too. HTTP/2 allows neither, as for an
+///   HTTP/1.0 request without `Host` that an intermediary passes on.
+/// - No empty host and no user information in a target, which RFC 9110 sections 4.2.1 and 4.2.4
+///   rule out for `http` and `https`, and RFC 9113 and RFC 9114 for `:authority`.
 fn check_host(head: &mut Parts) -> Result<(), &'static str> {
     let mut fields = head.headers.get_all(HOST).iter();
     let field = fields.next();
@@ -50,37 +51,30 @@ fn check_host(head: &mut Parts) -> Result<(), &'static str> {
         return Err("the request has several Host fields");
     }
     let http1 = matches!(head.version, Version::HTTP_10 | Version::HTTP_11);
-    let missing = if head.version == Version::HTTP_11 {
-        Err("the HTTP/1.1 request has no Host field")
-    } else {
-        Ok(())
-    };
-    let Some(target) = head.uri.authority() else {
-        return match field {
-            Some(field) if http1 && field.is_empty() => Ok(()),
-            Some(field) => host(field)
-                .map(drop)
-                .ok_or("the Host field is not a valid host"),
-            None if http1 => missing,
-            None => Err("the request names no host"),
-        };
-    };
-    if !is_valid(target) {
-        return Err("the request target names an invalid host");
+    let field_is_valid =
+        field.is_none_or(|field| (http1 && field.is_empty()) || host(field).is_some());
+    if !field_is_valid {
+        return Err("the Host field is not a valid host");
     }
-    match field {
-        None => missing,
-        Some(_) if http1 => {
+    match (head.uri.authority(), field) {
+        (Some(target), _) if !is_valid(target) => Err("the request target names an invalid host"),
+        (_, None) if head.version == Version::HTTP_11 => {
+            Err("the HTTP/1.1 request has no Host field")
+        }
+        (None, None) if head.version == Version::HTTP_3 => Err("the request names no host"),
+        (Some(target), Some(_)) if http1 => {
             let value =
                 HeaderValue::try_from(target.as_str()).expect("an authority is a valid value");
             head.headers.insert(HOST, value);
             Ok(())
         }
-        Some(field) => match host(field) {
-            Some(host) if is_same_host(&host, target, head.uri.scheme()) => Ok(()),
-            Some(_) => Err("the Host field names another host than :authority"),
-            None => Err("the Host field is not a valid host"),
-        },
+        (Some(target), Some(field)) => {
+            let same =
+                host(field).is_some_and(|host| is_same_host(&host, target, head.uri.scheme()));
+            same.then_some(())
+                .ok_or("the Host field names another host than :authority")
+        }
+        _ => Ok(()),
     }
 }
 
@@ -89,10 +83,11 @@ fn host(value: &HeaderValue) -> Option<Authority> {
     Authority::try_from(value.as_bytes()).ok().filter(is_valid)
 }
 
-/// Whether an authority is `host [ ":" port ]` (RFC 3986 section 3.2), without user information.
+/// Whether an authority is `host [ ":" port ]` (RFC 3986 section 3.2), without user information,
+/// and with a host.
 ///
-/// `Authority` checks the characters, but takes user information, any text as a port, and anything
-/// in brackets.
+/// `Authority` checks the characters, but takes user information, any text as a port, no host,
+/// and brackets anywhere.
 fn is_valid(authority: &Authority) -> bool {
     let host = authority.host();
     // With user information, the authority does not begin with the host.
@@ -103,15 +98,19 @@ fn is_valid(authority: &Authority) -> bool {
         || port
             .strip_prefix(':')
             .is_some_and(|digits| digits.bytes().all(|digit| digit.is_ascii_digit()));
-    let literal_is_valid = host
-        .strip_prefix('[')
-        .is_none_or(|literal| literal.strip_suffix(']').is_some_and(is_ip_literal));
-    port_is_valid && literal_is_valid
+    let host_is_valid = match host.strip_prefix('[') {
+        Some(literal) => literal.strip_suffix(']').is_some_and(is_ip_literal),
+        None => !host.is_empty() && !host.contains(['[', ']']),
+    };
+    port_is_valid && host_is_valid
 }
 
 /// Whether the inside of brackets is an IPv6 address, or an address of a later version
-/// (`IPvFuture` in RFC 3986 section 3.2.2), whose characters `Authority` has checked.
+/// (`IPvFuture` in RFC 3986 section 3.2.2), whose other characters `Authority` has checked.
 fn is_ip_literal(literal: &str) -> bool {
+    if literal.contains(['[', ']']) {
+        return false;
+    }
     let future = literal
         .strip_prefix(['v', 'V'])
         .and_then(|future| future.split_once('.'))
@@ -194,6 +193,13 @@ mod tests {
         }
     }
 
+    const SEVERAL: &str = "the request has several Host fields";
+    const MISSING: &str = "the HTTP/1.1 request has no Host field";
+    const INVALID: &str = "the Host field is not a valid host";
+    const TARGET: &str = "the request target names an invalid host";
+    const OTHER: &str = "the Host field names another host than :authority";
+    const NONE: &str = "the request names no host";
+
     #[test]
     fn http1_requests_name_one_valid_host() {
         for (version, uri, fields) in [
@@ -206,9 +212,14 @@ mod tests {
             (Version::HTTP_11, "/", &[("host", "[::1]:8080")]),
             (Version::HTTP_11, "/", &[("host", "[::ffff:192.0.2.1]")]),
             (Version::HTTP_11, "/", &[("host", "[v1.fe:x]")]),
-            (Version::HTTP_11, "/", &[("host", "a-b_c~d.example")]),
+            (
+                Version::HTTP_11,
+                "/",
+                &[("host", "a-b_c~d!$&'()*+,;=.example")],
+            ),
             (Version::HTTP_11, "*", &[("host", "localhost")]),
             (Version::HTTP_10, "/", &[]),
+            (Version::HTTP_10, "/", &[("host", "")]),
             (Version::HTTP_10, "http://localhost/", &[]),
             (Version::HTTP_11, "http://localhost/", &[("host", "other")]),
             (Version::HTTP_11, "http://localhost/", &[("host", "")]),
@@ -219,48 +230,99 @@ mod tests {
             ),
         ] {
             let mut head = head(version, uri, fields);
-            assert_eq!(
-                check_request(&mut head),
-                Ok(()),
-                "{version:?} {uri} {fields:?}"
-            );
+            let checked = check_request(&mut head);
+            assert_eq!(checked, Ok(()), "{version:?} {uri} {fields:?}");
         }
-        for (version, uri, fields) in [
-            (Version::HTTP_11, "/", &[][..]),
-            (Version::HTTP_11, "/", &[("host", "a"), ("host", "b")]),
-            (Version::HTTP_11, "/", &[("host", "a"), ("host", "a")]),
-            (Version::HTTP_10, "/", &[("host", "a"), ("host", "b")]),
-            (Version::HTTP_11, "/", &[("host", "not a host/x")]),
-            (Version::HTTP_11, "/", &[("host", "user@localhost")]),
-            (Version::HTTP_11, "/", &[("host", "localhost:abc")]),
-            (Version::HTTP_11, "/", &[("host", "localhost:+1")]),
-            (Version::HTTP_11, "/", &[("host", "localhost:1:2")]),
-            (Version::HTTP_11, "/", &[("host", "[bogus]")]),
-            (Version::HTTP_11, "/", &[("host", "[v.x]")]),
-            (Version::HTTP_11, "/", &[("host", "[::1")]),
-            (Version::HTTP_11, "/", &[("host", "::1")]),
-            (Version::HTTP_11, "http://localhost/", &[]),
+        for (version, uri, fields, reason) in [
+            (Version::HTTP_11, "/", &[][..], MISSING),
+            (Version::HTTP_11, "*", &[], MISSING),
+            (
+                Version::HTTP_11,
+                "/",
+                &[("host", "a"), ("host", "b")],
+                SEVERAL,
+            ),
+            (
+                Version::HTTP_11,
+                "/",
+                &[("host", "a"), ("host", "a")],
+                SEVERAL,
+            ),
+            (
+                Version::HTTP_10,
+                "/",
+                &[("host", "a"), ("host", "b")],
+                SEVERAL,
+            ),
+            (Version::HTTP_11, "/", &[("host", "not a host/x")], INVALID),
+            (Version::HTTP_10, "/", &[("host", "not a host/x")], INVALID),
+            (
+                Version::HTTP_11,
+                "/",
+                &[("host", "user@localhost")],
+                INVALID,
+            ),
+            (Version::HTTP_11, "/", &[("host", "localhost:abc")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "localhost:+1")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "localhost:1:2")], INVALID),
+            (Version::HTTP_11, "/", &[("host", ":80")], INVALID),
+            (Version::HTTP_11, "/", &[("host", ":")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "a[b]")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "a[b]:80")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "[bogus]")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "[v.x]")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "[v1.[x]]")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "[::1")], INVALID),
+            (Version::HTTP_11, "/", &[("host", "::1")], INVALID),
+            (Version::HTTP_11, "http://localhost/", &[], MISSING),
             (
                 Version::HTTP_11,
                 "http://localhost/",
                 &[("host", "a"), ("host", "b")],
+                SEVERAL,
+            ),
+            // The field is replaced, but has to be valid.
+            (
+                Version::HTTP_11,
+                "http://localhost/",
+                &[("host", "not a host/x")],
+                INVALID,
+            ),
+            (
+                Version::HTTP_11,
+                "http://localhost/",
+                &[("host", "user@localhost")],
+                INVALID,
             ),
             (
                 Version::HTTP_11,
                 "http://user@localhost/",
                 &[("host", "localhost")],
+                TARGET,
             ),
             (
                 Version::HTTP_11,
                 "http://localhost:abc/",
                 &[("host", "localhost")],
+                TARGET,
             ),
+            (
+                Version::HTTP_11,
+                "http://:80/",
+                &[("host", "localhost")],
+                TARGET,
+            ),
+            (
+                Version::HTTP_11,
+                "http://a[b]/",
+                &[("host", "localhost")],
+                TARGET,
+            ),
+            (Version::HTTP_10, "http://:80/", &[], TARGET),
         ] {
             let mut head = head(version, uri, fields);
-            assert!(
-                check_request(&mut head).is_err(),
-                "{version:?} {uri} {fields:?}"
-            );
+            let checked = check_request(&mut head);
+            assert_eq!(checked, Err(reason), "{version:?} {uri} {fields:?}");
         }
     }
 
@@ -273,21 +335,12 @@ mod tests {
                 Some("localhost:8080"),
             ),
             ("http://localhost/", &[("host", "")], Some("localhost")),
-            (
-                "http://localhost/",
-                &[("host", "not a host/x")],
-                Some("localhost"),
-            ),
             ("/", &[("host", "LOCALHOST.:8080")], Some("LOCALHOST.:8080")),
         ] {
             let mut head = head(Version::HTTP_11, uri, fields);
             check_request(&mut head).unwrap();
             let hosts: Vec<_> = head.headers.get_all(HOST).iter().collect();
-            assert_eq!(
-                hosts,
-                host.into_iter().collect::<Vec<_>>(),
-                "{uri} {fields:?}"
-            );
+            assert_eq!(hosts, Vec::from_iter(host), "{uri} {fields:?}");
         }
         // HTTP/1.0 needs no field, and none is added.
         let mut head = head(Version::HTTP_10, "http://localhost/", &[]);
@@ -312,36 +365,39 @@ mod tests {
                 ("/", &[("host", "localhost")]),
             ] {
                 let mut head = head(version, uri, fields);
-                assert_eq!(
-                    check_request(&mut head),
-                    Ok(()),
-                    "{version:?} {uri} {fields:?}"
-                );
+                let checked = check_request(&mut head);
+                assert_eq!(checked, Ok(()), "{version:?} {uri} {fields:?}");
             }
-            for (uri, fields) in [
-                ("/", &[][..]),
-                ("/", &[("host", "")]),
-                ("/", &[("host", "not a host/x")]),
-                ("https://localhost/", &[("host", "other.example")]),
-                ("https://localhost/", &[("host", "localhost:8443")]),
-                ("https://localhost/", &[("host", "localhost:99999")]),
-                ("https://localhost/", &[("host", "localhost:0")]),
-                ("http://localhost/", &[("host", "localhost:443")]),
-                ("https://localhost/", &[("host", "localhost.")]),
-                ("https://localhost/", &[("host", "user@localhost")]),
-                ("https://localhost/", &[("host", "")]),
+            for (uri, fields, reason) in [
+                ("/", &[("host", "")][..], INVALID),
+                ("/", &[("host", "not a host/x")], INVALID),
+                ("/", &[("host", ":443")], INVALID),
+                ("https://localhost/", &[("host", "other.example")], OTHER),
+                ("https://localhost/", &[("host", "localhost:8443")], OTHER),
+                ("https://localhost/", &[("host", "localhost:99999")], OTHER),
+                ("https://localhost/", &[("host", "localhost:0")], OTHER),
+                ("http://localhost/", &[("host", "localhost:443")], OTHER),
+                ("https://localhost/", &[("host", "localhost.")], OTHER),
+                ("https://localhost/", &[("host", "user@localhost")], INVALID),
+                ("https://localhost/", &[("host", "")], INVALID),
                 (
                     "https://localhost/",
                     &[("host", "localhost"), ("host", "other.example")],
+                    SEVERAL,
                 ),
-                ("https://user@localhost/", &[]),
+                ("https://user@localhost/", &[], TARGET),
+                ("https://:443/", &[], TARGET),
+                ("https://a[b]/", &[], TARGET),
             ] {
                 let mut head = head(version, uri, fields);
-                assert!(
-                    check_request(&mut head).is_err(),
-                    "{version:?} {uri} {fields:?}"
-                );
+                let checked = check_request(&mut head);
+                assert_eq!(checked, Err(reason), "{version:?} {uri} {fields:?}");
             }
         }
+        // As an HTTP/1.0 request without Host that an intermediary passes on.
+        let mut relayed = head(Version::HTTP_2, "/", &[]);
+        assert_eq!(check_request(&mut relayed), Ok(()));
+        let mut relayed = head(Version::HTTP_3, "/", &[]);
+        assert_eq!(check_request(&mut relayed), Err(NONE));
     }
 }

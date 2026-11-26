@@ -49,8 +49,9 @@ over HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
   ([#27](https://github.com/viell-dev/slop-warded-server/issues/27)). HTTP/1.0 needs none, and an
   empty one says that the target has no host. When an HTTP/1 target names a host, as a proxy's
   `GET http://example.com/ HTTP/1.1` does, the `Host` field that the application sees has that
-  host. Over HTTP/2 and HTTP/3, a `Host` field has to name the host of `:authority`, and a target
-  with user information, such as `user@example.com`, is refused on every protocol.
+  host, and its own `Host` field still has to be valid. Over HTTP/2 and HTTP/3, a `Host` field has
+  to name the host of `:authority`. A target with user information or without a host, such as
+  `user@example.com` or `:80`, is refused on every protocol.
 - **Response lengths** ([#28](https://github.com/viell-dev/slop-warded-server/issues/28)): a
   `Content-Length` that the application set for content of known length, and that was not its
   length, made debug builds panic over HTTP/1.1, with no response, and release builds send the

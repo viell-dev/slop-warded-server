@@ -52,8 +52,11 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 - **WebSockets over HTTP/2.** They work over HTTP/1.1.
 - **HEAD with compression** for files and for [some destinations](./middleware.md#the-response-to-head).
   The head of the response is that of the uncompressed one.
-- **Whitespace in trailers.** In the trailers of an HTTP/2 or HTTP/3 request, a field value can
-  begin or end with a space or a tab, which HTTP/1.1 removes, and which the server refuses in heads.
+- **Percent-encoded hosts**, such as `Host: ex%41mple.com`, get a 400, although RFC 3986 allows
+  them. The `http` crate refuses them, in targets as in `Host`.
+- **Checks of trailers.** The trailers of an HTTP/2 or HTTP/3 request arrive as the client sent
+  them: a field value can begin or end with a space or a tab, which HTTP/1.1 removes and the server
+  refuses in heads, and they can hold a `Host` field.
 - **A handler's own `Content-Length` for HEAD.** Where the server knows the length of the content,
   it replaces one that a handler declared, and logs a warning. A response to HEAD without content
   keeps the length that the application declared, which the server cannot check: `any(handler)`

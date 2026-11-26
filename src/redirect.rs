@@ -28,19 +28,12 @@ fn bad_request() -> Response {
 }
 
 fn location(request: &Request, port: u16) -> Option<HeaderValue> {
+    // `fields::check_request` has refused several hosts and invalid ones, so what is left without
+    // one is HTTP/1.0 without a Host field, or an empty one.
     let authority = match request.uri().authority() {
         Some(authority) => authority.clone(),
-        None => {
-            let mut fields = request.headers().get_all(HOST).iter();
-            match (fields.next(), fields.next()) {
-                (Some(field), None) => Authority::try_from(field.as_bytes()).ok()?,
-                _ => return None,
-            }
-        }
+        None => Authority::try_from(request.headers().get(HOST)?.as_bytes()).ok()?,
     };
-    if authority.as_str().contains('@') || authority.host().is_empty() {
-        return None;
-    }
     let target = request
         .uri()
         .path_and_query()
@@ -97,14 +90,9 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_missing_repeated_or_invalid_host() {
-        for hosts in [
-            &[][..],
-            &["a.example", "b.example"],
-            &[""],
-            &["a b"],
-            &["user@example.com"],
-        ] {
+    fn refuses_a_request_without_a_host() {
+        // Several and invalid ones are refused before.
+        for hosts in [&[][..], &[""]] {
             assert_eq!(locate("/", hosts, 443), None, "{hosts:?}");
         }
     }
