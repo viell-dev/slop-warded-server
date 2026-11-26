@@ -357,7 +357,19 @@ async fn connect_works_over_http1_and_is_refused_over_http3() {
 
 #[tokio::test]
 async fn statuses_without_content_have_no_body() {
+    use std::convert::Infallible;
+
     let authority = Authority::new();
+    // Not a handler: it sends content and its length for HEAD as for GET.
+    let service = tower::service_fn(|_: Request| async {
+        let mut response = Response::new(Body::from("hello"));
+        *response.status_mut() = StatusCode::RESET_CONTENT;
+        let length = HeaderValue::from_static("5");
+        response
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, length);
+        Ok::<_, Infallible>(response)
+    });
     let app = axum::Router::new()
         .route(
             "/204",
@@ -374,35 +386,81 @@ async fn statuses_without_content_have_no_body() {
         .route(
             "/304",
             axum_get(|| async { (StatusCode::NOT_MODIFIED, "unexpected") }),
-        );
+        )
+        .fallback_service(service);
     let running = Running::start(common::server(&authority), app);
     for version in VERSIONS {
-        for path in ["/204", "/205", "/304"] {
-            let mut client = Client::connect(version, running.https, &authority)
-                .await
-                .unwrap();
-            let response = client.get(path).await.unwrap();
-            let length = response.headers().get(header::CONTENT_LENGTH);
-            if path == "/205" {
-                assert!(length.is_none_or(|length| length == "0"), "{version:?}");
-            } else {
-                assert_eq!(length, None, "{version:?} {path}");
+        for method in ["GET", "HEAD"] {
+            for path in ["/204", "/205", "/205-service", "/304"] {
+                let mut client = Client::connect(version, running.https, &authority)
+                    .await
+                    .unwrap();
+                let response = client
+                    .send(request(method, path, Body::empty()))
+                    .await
+                    .unwrap();
+                let case = format!("{version:?} {method} {path}");
+                let lengths: Vec<_> = response
+                    .headers()
+                    .get_all(header::CONTENT_LENGTH)
+                    .iter()
+                    .collect();
+                // A 205 has no content, also for HEAD (RFC 9110 section 15.3.6).
+                let expected = if path.starts_with("/205") {
+                    &["0"][..]
+                } else {
+                    &[]
+                };
+                assert_eq!(lengths, expected, "{case}");
+                assert_eq!(text(response).await.unwrap(), "", "{case}");
             }
-            assert_eq!(text(response).await.unwrap(), "", "{version:?} {path}");
         }
     }
 }
 
 #[tokio::test]
 async fn an_informational_status_is_not_a_final_response() {
+    use std::convert::Infallible;
+
     let authority = Authority::new();
-    let app = axum::Router::new().fallback(|| async { StatusCode::EARLY_HINTS });
+    // Answers with the status that the path names, and content.
+    let service = tower::service_fn(|request: Request| async move {
+        let status = request.uri().path()[1..].parse().unwrap();
+        let mut response = Response::new(Body::from("hello"));
+        *response.status_mut() = StatusCode::from_u16(status).unwrap();
+        Ok::<_, Infallible>(response)
+    });
+    let app = axum::Router::new()
+        .route("/handler", any(|| async { StatusCode::EARLY_HINTS }))
+        .fallback_service(service);
     let running = Running::start(common::server(&authority), app);
-    let mut client = Client::connect(Version::HTTP_3, running.https, &authority)
-        .await
-        .unwrap();
-    let response = client.get("/").await.unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    for version in VERSIONS {
+        // One connection, which outlives the errors.
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        let mut paths = vec!["/handler", "/100", "/103"];
+        // A 101 upgrades an HTTP/1.1 connection, and HTTP/2 and HTTP/3 have none.
+        if version != Version::HTTP_11 {
+            paths.push("/101");
+        }
+        for path in paths {
+            for method in ["GET", "HEAD"] {
+                let case = format!("{version:?} {method} {path}");
+                let response = client.send(request(method, path, Body::empty())).await;
+                let response = response.unwrap_or_else(|error| panic!("{case}: {error}"));
+                assert_eq!(
+                    response.status(),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "{case}"
+                );
+                assert_eq!(response.headers()[header::CONTENT_LENGTH], "0", "{case}");
+                assert_eq!(text(response).await.unwrap(), "", "{case}");
+            }
+        }
+        let response = client.get("/200").await.unwrap();
+        assert_eq!(text(response).await.unwrap(), "hello", "{version:?}");
+    }
 }
 
 #[tokio::test]

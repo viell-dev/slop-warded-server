@@ -1,8 +1,8 @@
 //! What Hyper does to the heads of HTTP/2 messages and h3 leaves to the server.
 
-use axum::{body::Body, response::Response};
+use axum::response::Response;
 use http::{
-    HeaderMap, HeaderName, HeaderValue, StatusCode,
+    HeaderMap, HeaderName, HeaderValue,
     header::{CONNECTION, DATE, TE, TRANSFER_ENCODING, UPGRADE},
 };
 use std::time::SystemTime;
@@ -35,14 +35,9 @@ pub(super) fn content_length(headers: &HeaderMap) -> Result<Option<u64>, &'stati
 }
 
 /// Make the application's response one that HTTP/3 can carry.
+///
+/// `context::finish` has replaced an informational status already.
 pub(super) fn prepare(mut response: Response) -> Response {
-    let status = response.status();
-    // The one final response cannot be informational, and 101 does not exist in HTTP/3.
-    if status.is_informational() {
-        tracing::error!(%status, "the application responded with an informational status");
-        response = Response::new(Body::empty());
-        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-    }
     let headers = response.headers_mut();
     // Middleware written for HTTP/1.1 may add them.
     for name in CONNECTION_FIELDS {
