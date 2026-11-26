@@ -28,7 +28,7 @@ Create a project, choose a template, run it, and open the address that it prints
 
 ```sh
 cargo install cargo-generate --locked
-cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.2
+cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.3
 cd my-project
 cargo run
 ```
