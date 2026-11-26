@@ -53,6 +53,10 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 - **HEAD with compression** for files and for [some destinations](./middleware.md#the-response-to-head).
   The head of the response is that of the uncompressed one.
 - **gRPC** has not been tried.
+- **`If-Range` for files.** `StaticFiles`, `SinglePageApp` and `ServeDir` come from tower-http 0.7.1,
+  which answers a range even when `If-Range` names an older version of the file, so a resumed
+  download of a file that changed mixes the two. Its main branch has the fix
+  ([tower-http#754](https://github.com/tower-rs/tower-http/pull/754)), which no release has yet.
 
 ## Connections
 

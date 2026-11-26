@@ -216,8 +216,9 @@ mod spa {
 
         /// The directory in the build whose files have hashed names, served below the same path.
         ///
-        /// Default: `assets`, as Vite names it. Its files may be kept for a year, except HTML,
-        /// which browsers must check again (`Cache-Control: no-cache`).
+        /// Default: `assets`, as Vite names it. Its files may be kept for a year, except HTML, and
+        /// names with a `~`, which may be Windows's short names for HTML files: browsers must check
+        /// them again (`Cache-Control: no-cache`).
         ///
         /// # Panics
         ///
@@ -314,7 +315,7 @@ mod spa {
     /// gets `no-cache`. HTML is told by the file's name, which a 304 also has, and by the content
     /// type of a 200.
     async fn cache_assets(request: Request, next: Next) -> Response {
-        let named_html = names_html(request.uri().path());
+        let named_html = may_name_html(request.uri().path());
         let mut response = next.run(request).await;
         let found = response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED;
         if !found {
@@ -337,18 +338,21 @@ mod spa {
         response
     }
 
-    /// Whether the file that a path leads to has the name of an HTML file, as the file system
+    /// Whether the file that a path leads to may have the name of an HTML file, as the file system
     /// sees it.
     ///
     /// `ServeDir` decodes the path, and Windows ignores case, trailing dots and spaces, and what
     /// follows a `:`, which names a stream of the file. A path that ends in a directory counts as
-    /// HTML too.
-    fn names_html(path: &str) -> bool {
+    /// HTML too, and so does a name with a `~`: it may be the short name that Windows gives a file,
+    /// such as `LONG-P~1.SHT` for `long-page.shtml`, whose extension says nothing about the file's.
+    /// Build tools put no `~` in the names they hash.
+    fn may_name_html(path: &str) -> bool {
         let path = percent_decode_str(path).decode_utf8_lossy();
         let name = path.rsplit(['/', '\\']).next().unwrap_or_default();
         let name = name.split(':').next().unwrap_or_default();
         let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
         name.is_empty()
+            || name.contains('~')
             || mime_guess::from_path(&name)
                 .first_raw()
                 .is_some_and(is_html)
@@ -380,8 +384,11 @@ mod spa {
                 "/assets/page.xhtml",
                 "/assets/sub/",
                 "/assets/",
+                "/assets/LONG-P~1.SHT",
+                "/assets/INDEX~1.HTM",
+                "/assets/long-p%7E1.sht",
             ] {
-                assert!(names_html(path), "{path}");
+                assert!(may_name_html(path), "{path}");
             }
             for path in [
                 "/assets/app.1a2b.js",
@@ -389,7 +396,7 @@ mod spa {
                 "/assets/html",
                 "/assets/index.html.js",
             ] {
-                assert!(!names_html(path), "{path}");
+                assert!(!may_name_html(path), "{path}");
             }
         }
 

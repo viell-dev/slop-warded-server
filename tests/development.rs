@@ -288,17 +288,22 @@ async fn other_sites_are_refused_on_the_development_address() {
                 to("POST", &here, &[cross, navigate]),
                 to("POST", &here, &[("origin", "https://attacker.example")]),
                 to("DELETE", &here, &[("origin", "null")]),
+                // A page can come from any server's IP address.
+                to("POST", &here, &[("origin", "http://192.0.2.42")]),
+                to("POST", &here, &[("origin", "http://[2001:db8::1]:8080")]),
             ];
             if !http2 {
-                refused.push(to(
-                    "GET",
-                    &here,
-                    &[
-                        ("connection", "upgrade"),
-                        ("upgrade", "websocket"),
-                        ("origin", "https://attacker.example"),
-                    ],
-                ));
+                for origin in ["https://attacker.example", "http://192.0.2.42"] {
+                    refused.push(to(
+                        "GET",
+                        &here,
+                        &[
+                            ("connection", "upgrade"),
+                            ("upgrade", "websocket"),
+                            ("origin", origin),
+                        ],
+                    ));
+                }
             }
             for request in refused {
                 let what = format!("{case}: {} {:?}", request.uri(), request.headers());
