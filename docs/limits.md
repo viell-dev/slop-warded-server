@@ -71,6 +71,9 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
   which answers a range even when `If-Range` names an older version of the file, so a resumed
   download of a file that changed mixes the two. Its main branch has the fix
   ([tower-http#754](https://github.com/tower-rs/tower-http/pull/754)), which no release has yet.
+- **What a file directory holds is served.** `StaticFiles` and `SinglePageApp` serve every file
+  below their directory as tower-http's `ServeDir` does, including names that begin with a dot, and
+  follow symbolic links, also to files outside it. Keep only what the site publishes there.
 
 ## Connections
 

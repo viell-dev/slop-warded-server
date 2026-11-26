@@ -49,7 +49,9 @@ pub(crate) fn app(
     } else {
         app
     };
-    let open: Arc<str> = format!("http://{address}/").into();
+    // A development address bound as `[::ffff:127.0.0.1]` is opened as `127.0.0.1`, which reaches
+    // the same listener and which the host rule accepts.
+    let open: Arc<str> = format!("http://{}/", crate::context::canonical(address)).into();
     app.layer(from_fn_with_state(open, refuse_other_sites))
 }
 
@@ -177,8 +179,10 @@ fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
 }
 
 /// Whether an authority, such as `localhost:3000`, names this computer, with any port: a loopback
-/// address, also as an IPv4-mapped one, `localhost`, or a name below `.localhost`, which browsers
-/// answer themselves. No other site's DNS can change these.
+/// address, `localhost`, or a name below `.localhost`, which browsers answer themselves. No other
+/// site's DNS can change these. An IPv4-mapped loopback address, such as `[::ffff:127.0.0.1]`,
+/// reaches the listener but is not a secure context, so browsers send it no Fetch Metadata, as for
+/// `0.0.0.0`.
 fn is_this_computer(authority: &str) -> bool {
     let Ok(authority) = authority.parse::<Authority>() else {
         return false;
@@ -196,7 +200,7 @@ fn is_this_computer(authority: &str) -> bool {
         None => host.parse::<Ipv4Addr>().ok().map(IpAddr::from),
     };
     if let Some(address) = address {
-        return address.to_canonical().is_loopback();
+        return address.is_loopback();
     }
     if host.starts_with('[') {
         return false;
@@ -317,7 +321,6 @@ mod tests {
             "127.0.0.1.:3000",
             "127.0.0.2",
             "[::1]:5173",
-            "[::ffff:127.0.0.1]:5173",
             "localhost",
             "LOCALHOST:3000",
             "localhost.:3000",
@@ -335,6 +338,7 @@ mod tests {
             "0.0.0.0:3000",
             "[2001:db8::1]",
             "[::ffff:192.0.2.42]",
+            "[::ffff:127.0.0.1]:5173",
             "[::]",
             "[::]:3000",
             "attacker.example",
@@ -466,7 +470,7 @@ mod tests {
     #[test]
     fn every_authority_must_be_this_computer() {
         assert_eq!(check(Method::GET, "http://localhost:3000/", &[]), None);
-        for host in ["127.0.0.1:3000", "[::1]:3000", "[::ffff:127.0.0.1]:3000"] {
+        for host in ["127.0.0.1:3000", "[::1]:3000"] {
             assert_eq!(check(Method::GET, "/", &[("host", host)]), None, "{host}");
         }
         for (uri, fields) in [
@@ -483,6 +487,7 @@ mod tests {
             ("/", vec![("host", "[::]:3000")]),
             ("/", vec![("host", "192.168.1.20:3000")]),
             ("/", vec![("host", "[::ffff:192.0.2.42]:3000")]),
+            ("/", vec![("host", "[::ffff:127.0.0.1]:3000")]),
             ("http://0.0.0.0:3000/", vec![]),
         ] {
             let refused = check(Method::GET, uri, &fields);
