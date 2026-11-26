@@ -84,9 +84,10 @@ redirects with a 303, so that reloading the next page does not send it again:
 
 <<< ../templates/website/src/contact.rs
 
-Each field has a label, and one with a problem has `aria-invalid` and a description, which screen
-readers announce. The list of problems links to the fields, and the page's title begins with
-`Error:`:
+Each field has a label. A field with a problem has `aria-invalid` and a description so a screen
+reader can associate the message with the field. The list of problems links to the fields, and
+the page's title begins with `Error:`. See [the form markup in the template
+guide](./template-website.md#add-data-or-a-form).
 
 The form has `novalidate`, so that the browser leaves the checks to the server, whose messages are
 the same everywhere. A site with logins also needs protection against forms on other sites (CSRF),
