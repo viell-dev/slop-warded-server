@@ -12,8 +12,8 @@ release, 0.0.8, has these open defects:
 - **Cancelled requests.** A handler is not cancelled when the client gives up on one request, only
   when the whole connection ends ([h3#352](https://github.com/hyperium/h3/issues/352)).
 - **Malformed heads.** h3 accepts pseudo-header fields that are repeated or come after other fields,
-  and uses the last of each. The server refuses fields about the connection and unclear lengths, but
-  cannot see these.
+  and uses the last of each. The server refuses fields about the connection, unclear lengths,
+  whitespace around values and hosts that disagree, but cannot see these.
 
 The server works around others, most of which let a client fill its memory. It gives h3 one frame at
 a time, and refuses one that declares too much
@@ -52,6 +52,8 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
 - **WebSockets over HTTP/2.** They work over HTTP/1.1.
 - **HEAD with compression** for files and for [some destinations](./middleware.md#the-response-to-head).
   The head of the response is that of the uncompressed one.
+- **Whitespace in trailers.** In the trailers of an HTTP/2 or HTTP/3 request, a field value can
+  begin or end with a space or a tab, which HTTP/1.1 removes, and which the server refuses in heads.
 - **A handler's own `Content-Length` for HEAD.** Where the server knows the length of the content,
   it replaces one that a handler declared, and logs a warning. For HEAD, `any(handler)` has taken
   the content off, so the handler's length goes out as it is; `handler.into_service()` keeps the
