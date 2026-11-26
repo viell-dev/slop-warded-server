@@ -1,5 +1,6 @@
 //! What every listener does to requests before the application sees them, and to its responses.
 
+use crate::head;
 use axum::{
     body::{Body, Bytes, HttpBody},
     extract::ConnectInfo,
@@ -7,10 +8,12 @@ use axum::{
         HeaderMap, HeaderValue, Method, Request, StatusCode, Version,
         header::{CONTENT_LENGTH, COOKIE, TRANSFER_ENCODING},
     },
-    response::Response,
+    response::{IntoResponse, Response},
 };
+use futures_util::future::Either;
 use std::{
     convert::Infallible,
+    future::{Ready, ready},
     net::SocketAddr,
     task::{Context, Poll},
 };
@@ -26,6 +29,8 @@ pub(crate) enum Security {
 }
 
 type Finish = fn(Response) -> Response;
+
+type Routed = <MapResponse<axum::Router, Finish> as Service<Request<Body>>>::Future;
 
 /// The application as seen by one connection.
 #[derive(Clone)]
@@ -52,14 +57,33 @@ where
 {
     type Response = Response;
     type Error = Infallible;
-    type Future = <MapResponse<axum::Router, Finish> as Service<Request<Body>>>::Future;
+    /// A refusal, or the application's response.
+    type Future = Either<Ready<Result<Response, Infallible>>, Routed>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
         <axum::Router as Service<Request<Body>>>::poll_ready(&mut self.app, cx)
     }
 
     fn call(&mut self, request: Request<B>) -> Self::Future {
-        let mut request = request.map(Body::new);
+        let finish: Finish = match *request.method() {
+            Method::HEAD => finish_head,
+            Method::CONNECT => finish_connect,
+            _ => finish,
+        };
+        let (mut parts, body) = request.into_parts();
+        // Before the application and its routes. The HTTP/3 bridge refuses such heads itself, as
+        // stream errors.
+        if parts.version != Version::HTTP_3
+            && let Err(reason) = head::check(&mut parts)
+        {
+            tracing::debug!(reason, "a malformed request was refused");
+            let refusal = (
+                StatusCode::BAD_REQUEST,
+                format!("Malformed request: {reason}.\n"),
+            );
+            return Either::Left(ready(Ok(finish(refusal.into_response()))));
+        }
+        let mut request = Request::from_parts(parts, Body::new(body));
         let extensions = request.extensions_mut();
         extensions.insert(ConnectInfo(self.peer));
         #[cfg(feature = "warded")]
@@ -72,12 +96,7 @@ where
         if matches!(request.version(), Version::HTTP_2 | Version::HTTP_3) {
             join_cookies(request.headers_mut());
         }
-        let finish: Finish = match *request.method() {
-            Method::HEAD => finish_head,
-            Method::CONNECT => finish_connect,
-            _ => finish,
-        };
-        MapResponse::new(self.app.clone(), finish).call(request)
+        Either::Right(MapResponse::new(self.app.clone(), finish).call(request))
     }
 }
 

@@ -362,8 +362,10 @@ async fn respond(
 ) -> Result<(), BoxError> {
     let (send, mut receive) = stream.split();
     let responder = Responder::new(send);
-    let (parts, ()) = head.into_parts();
-    let body = match head::content_length(&parts.headers) {
+    let (mut parts, ()) = head.into_parts();
+    let checked =
+        crate::head::check(&mut parts).and_then(|()| head::content_length(&parts.headers));
+    let body = match checked {
         Ok(length) => RequestBody::new(receive, length),
         Err(malformed) => {
             receive.stop_sending(Code::H3_MESSAGE_ERROR);

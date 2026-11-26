@@ -106,6 +106,17 @@ Check in this order:
 Warded's [troubleshooting](https://viell-dev.github.io/slop-warded-router/troubleshooting.html)
 covers routes in detail.
 
+## A 400 that says `Malformed request`
+
+The client sent a request that the HTTP specifications call malformed, and the server refused it
+before the application saw it. Over HTTP/3 the request fails with `H3_MESSAGE_ERROR` instead. At the
+`debug` level, the log says `a malformed request was refused`, or `an HTTP/3 request ended early`,
+with the reason. Fix the client.
+
+| After `Malformed request:`                     | Cause                                                                                        |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `a field value begins or ends with whitespace` | A space or a tab around a value, such as `acme `, over HTTP/2 or HTTP/3; HTTP/1.1 removes it |
+
 ## A 400 or 500 from an extractor
 
 | Response or log                                                                         | Cause and fix                                                                                                           |
