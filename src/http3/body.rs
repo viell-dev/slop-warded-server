@@ -8,7 +8,7 @@ use super::{
     BoxError,
     transport::{Receiver, Sender},
 };
-use crate::head::declared_length;
+use crate::fields::declared_length;
 use axum::{body::HttpBody, response::Response};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use h3::{error::Code, server::RequestStream};

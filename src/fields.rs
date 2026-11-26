@@ -16,7 +16,7 @@ use std::net::Ipv6Addr;
 ///
 /// The target of an HTTP/1 request in absolute form replaces its `Host` field, which the
 /// application then sees with the target's host (RFC 9112 section 3.2.2).
-pub(crate) fn check(head: &mut Parts) -> Result<(), &'static str> {
+pub(crate) fn check_request(head: &mut Parts) -> Result<(), &'static str> {
     if head.headers.values().any(has_outer_whitespace) {
         return Err("a field value begins or ends with whitespace");
     }
@@ -186,11 +186,11 @@ mod tests {
     fn values_with_whitespace_around_them_are_refused() {
         for value in [" a", "a ", "\ta", "a\t", " ", "\t"] {
             let mut head = head(Version::HTTP_2, "https://localhost/", &[("x-a", value)]);
-            assert!(check(&mut head).is_err(), "{value:?}");
+            assert!(check_request(&mut head).is_err(), "{value:?}");
         }
         for value in ["a", "a b", "a\tb", "", "\"a \""] {
             let mut head = head(Version::HTTP_2, "https://localhost/", &[("x-a", value)]);
-            assert_eq!(check(&mut head), Ok(()), "{value:?}");
+            assert_eq!(check_request(&mut head), Ok(()), "{value:?}");
         }
     }
 
@@ -219,7 +219,11 @@ mod tests {
             ),
         ] {
             let mut head = head(version, uri, fields);
-            assert_eq!(check(&mut head), Ok(()), "{version:?} {uri} {fields:?}");
+            assert_eq!(
+                check_request(&mut head),
+                Ok(()),
+                "{version:?} {uri} {fields:?}"
+            );
         }
         for (version, uri, fields) in [
             (Version::HTTP_11, "/", &[][..]),
@@ -253,7 +257,10 @@ mod tests {
             ),
         ] {
             let mut head = head(version, uri, fields);
-            assert!(check(&mut head).is_err(), "{version:?} {uri} {fields:?}");
+            assert!(
+                check_request(&mut head).is_err(),
+                "{version:?} {uri} {fields:?}"
+            );
         }
     }
 
@@ -274,7 +281,7 @@ mod tests {
             ("/", &[("host", "LOCALHOST.:8080")], Some("LOCALHOST.:8080")),
         ] {
             let mut head = head(Version::HTTP_11, uri, fields);
-            check(&mut head).unwrap();
+            check_request(&mut head).unwrap();
             let hosts: Vec<_> = head.headers.get_all(HOST).iter().collect();
             assert_eq!(
                 hosts,
@@ -284,7 +291,7 @@ mod tests {
         }
         // HTTP/1.0 needs no field, and none is added.
         let mut head = head(Version::HTTP_10, "http://localhost/", &[]);
-        check(&mut head).unwrap();
+        check_request(&mut head).unwrap();
         assert!(!head.headers.contains_key(HOST));
     }
 
@@ -305,7 +312,11 @@ mod tests {
                 ("/", &[("host", "localhost")]),
             ] {
                 let mut head = head(version, uri, fields);
-                assert_eq!(check(&mut head), Ok(()), "{version:?} {uri} {fields:?}");
+                assert_eq!(
+                    check_request(&mut head),
+                    Ok(()),
+                    "{version:?} {uri} {fields:?}"
+                );
             }
             for (uri, fields) in [
                 ("/", &[][..]),
@@ -326,7 +337,10 @@ mod tests {
                 ("https://user@localhost/", &[]),
             ] {
                 let mut head = head(version, uri, fields);
-                assert!(check(&mut head).is_err(), "{version:?} {uri} {fields:?}");
+                assert!(
+                    check_request(&mut head).is_err(),
+                    "{version:?} {uri} {fields:?}"
+                );
             }
         }
     }
