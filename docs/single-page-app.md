@@ -4,10 +4,46 @@ description: "Serve a built React, Vue, Svelte, Angular or WebAssembly app toget
 
 # A single-page app
 
-A single-page app is a set of files that a build tool writes: an `index.html`, and scripts and
-styles with generated names. The browser runs it and asks an API for data. This page serves both
-from one server. It works for Vite (React, Vue, Svelte), Angular, Trunk (Yew, Leptos in the browser)
-and others that produce such files. It does not run JavaScript on the server.
+Warded Server can serve a [Vite build](https://vite.dev/guide/static-deploy) and a Rust API from
+one program. Vite runs during development and building. For a static build it writes
+`index.html`, scripts and styles that an ordinary file server can send. The browser runs the
+JavaScript and calls the API.
+
+## Choose what to run
+
+| You have | Use | Why |
+| --- | --- | --- |
+| A built site with no API | A static host or CDN | It can handle certificates and caching and serve files close to visitors. |
+| A built site and an API in another language | That API's server, or Caddy or nginx | The build consists of ordinary files. Your API can keep its current runtime. |
+| A built site and a Rust API | Warded Server for local or private trials | Run the build and API on one origin and deploy them together. |
+| Nuxt, SvelteKit or Next.js with server-side rendering | A supported JavaScript runtime such as Node.js, behind a proxy | The framework needs to run JavaScript to render pages for requests. |
+| Interactive pages rendered by Rust | [Leptos](https://book.leptos.dev/) | Rust renders pages on the server and WebAssembly can make them interactive in the browser. |
+
+## What you get with a Rust API
+
+- **One origin.** Browser code can call `/api/hello` without cross-origin (CORS) settings. The
+  frontend and API can ship together. Any server that serves both on the same origin gives you
+  this.
+- **HTTP/2 and HTTP/3 without a proxy.** [Node's QUIC module](https://nodejs.org/api/quic.md) is
+  marked early development. [Caddy supports all three HTTP versions][caddy-protocols] in front
+  of an application and can [obtain and renew certificates][caddy-https].
+- **Routing by request details.** Warded can choose a build by a header or a language. A
+  proxy that terminates the connection leaves the app with the proxy's HTTP version.
+  `SinglePageApp` keeps API 404s separate from the page fallback.
+
+Warded Server is an alpha. HTTP/3 uses an experimental library with [known
+weaknesses](./limits.md#http-3). Keep it off the open internet. It serves files from where the
+program runs. A CDN can serve them from locations closer to visitors. Warded Server requires you
+to provide and renew [certificates](./certificates.md) for deployment
+([issue #4](https://github.com/viell-dev/slop-warded-server/issues/4)).
+
+Warded Server serves built JavaScript as files. For HTML rendered in Rust with JavaScript and CSS
+built by Vite, see [Vite's backend integration guide](https://vite.dev/guide/backend-integration).
+It shows how to find the generated filenames in the build manifest. This setup has not been
+tested here.
+
+[caddy-protocols]: https://caddyserver.com/docs/caddyfile/options#protocols
+[caddy-https]: https://caddyserver.com/docs/automatic-https
 
 ## The server
 
@@ -105,7 +141,8 @@ case it holds pages too.
 
 ## During development
 
-Run the build tool's own server for the app, and let it pass requests for the API on. With Vite:
+Run the build tool's own server for the app, and let it pass requests for the API on. With
+[Vite's development proxy](https://vite.dev/config/server-options.html#server-proxy):
 
 ```text
 // vite.config.js
