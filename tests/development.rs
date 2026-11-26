@@ -4,6 +4,7 @@ mod common;
 
 use axum::{
     Extension, Json,
+    body::Body,
     handler::HandlerWithoutStateExt,
     http::{HeaderValue, Request, StatusCode, Version, header},
     response::Html,
@@ -16,9 +17,9 @@ use std::{
 };
 use warded::{
     Matcher, Router, TransportSecurity,
-    matchers::{exact_path, secured, unsecure},
+    matchers::{exact_path, path, secured, unsecure},
 };
-use warded_server::{DefaultMiddleware, Error, app};
+use warded_server::{DefaultMiddleware, Error, StaticFiles, app};
 
 const PAGE: &str = "<!doctype html><title>A page</title><p>Hello</p>";
 const EVENTS: &str = "/_tower-livereload/event-stream";
@@ -227,4 +228,142 @@ async fn live_reload_can_be_turned_off() {
     soon(response.into_body().collect()).await.unwrap();
     let events = client.get(EVENTS).await.unwrap();
     assert_eq!(events.status(), StatusCode::NOT_FOUND);
+}
+
+/// A request for this URI, which names the host, with these fields.
+fn to(method: &str, uri: &str, fields: &[(&'static str, &'static str)]) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap();
+    for (name, value) in fields {
+        let value = HeaderValue::from_static(value);
+        request.headers_mut().append(*name, value);
+    }
+    request
+}
+
+const REFUSED: &str = "The development address answers ";
+
+#[tokio::test]
+async fn other_sites_are_refused_on_the_development_address() {
+    let authority = Authority::new();
+    let cross = ("sec-fetch-site", "cross-site");
+    let navigate = ("sec-fetch-mode", "navigate");
+    for live_reload in [true, false] {
+        let server = development(&authority).live_reload(live_reload);
+        let running = Running::start(server, site());
+        let address = running.development.unwrap();
+        let port = address.port();
+        let here = format!("http://localhost:{port}/");
+        for http2 in [false, true] {
+            let case = format!("live reload {live_reload}, HTTP/2 {http2}");
+            let mut client = if http2 {
+                Client::plain_http2(address).await
+            } else {
+                Client::plain(address).await
+            }
+            .unwrap();
+            let mut refused = vec![
+                to("GET", "http://attacker.example/", &[]),
+                to("GET", &format!("http://attacker.example.:{port}/"), &[]),
+                to(
+                    "GET",
+                    &format!("http://localhost.attacker.example:{port}/"),
+                    &[],
+                ),
+                to("GET", &format!("http://127.0.0.1.nip.io:{port}/"), &[]),
+                to(
+                    "GET",
+                    &format!("http://attacker.example:{port}{EVENTS}"),
+                    &[],
+                ),
+                to("GET", &here, &[cross, ("sec-fetch-mode", "cors")]),
+                to(
+                    "GET",
+                    &here,
+                    &[cross, navigate, ("sec-fetch-dest", "embed")],
+                ),
+                to("POST", &here, &[cross, navigate]),
+                to("POST", &here, &[("origin", "https://attacker.example")]),
+                to("DELETE", &here, &[("origin", "null")]),
+            ];
+            if !http2 {
+                refused.push(to(
+                    "GET",
+                    &here,
+                    &[
+                        ("connection", "upgrade"),
+                        ("upgrade", "websocket"),
+                        ("origin", "https://attacker.example"),
+                    ],
+                ));
+            }
+            for request in refused {
+                let what = format!("{case}: {} {:?}", request.uri(), request.headers());
+                let response = client.send(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::FORBIDDEN, "{what}");
+                assert!(text(response).await.unwrap().starts_with(REFUSED), "{what}");
+            }
+            for request in [
+                to("GET", &format!("http://127.0.0.1:{port}/"), &[]),
+                to("GET", &format!("http://[::1]:{port}/"), &[]),
+                to("GET", &here, &[]),
+                to("GET", &format!("http://App.LocalHost:{port}/"), &[]),
+                to(
+                    "GET",
+                    &here,
+                    &[cross, navigate, ("sec-fetch-dest", "document")],
+                ),
+                to("GET", &here, &[("origin", "https://attacker.example")]),
+                to("POST", &here, &[("origin", "http://127.0.0.1:5173")]),
+                to("POST", &here, &[("sec-fetch-site", "same-origin")]),
+            ] {
+                let what = format!("{case}: {} {:?}", request.uri(), request.headers());
+                let response = client.send(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "{what}");
+                assert!(text(response).await.unwrap().starts_with(PAGE), "{what}");
+            }
+        }
+        // A request that names no host at all.
+        let response = common::cleartext(address, "GET / HTTP/1.0\r\n\r\n").await;
+        assert!(response.contains(" 403 Forbidden\r\n"), "{response}");
+        assert!(
+            response.contains(&format!("Open http://{address}/")),
+            "{response}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn ranges_of_pages_are_left_as_they_are() {
+    let authority = Authority::new();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("page.html"), "<p>Hi").unwrap();
+    let files = StaticFiles::new("/files", directory.path());
+    let routes = Router::new().route(path("/files/{*file}").unwrap(), files);
+    let running = Running::start(development(&authority), app(routes));
+    let mut client = Client::plain(running.development.unwrap()).await.unwrap();
+
+    let mut request = page("/files/page.html");
+    let range = HeaderValue::from_static("bytes=0-2");
+    request.headers_mut().insert(header::RANGE, range);
+    let response = client.send(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 0-2/5");
+    assert_eq!(response.headers()[header::CONTENT_LENGTH], "3");
+    assert_eq!(text(response).await.unwrap(), "<p>");
+
+    // The whole page has the script, and the length that it has with it.
+    let response = client.send(page("/files/page.html")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let length: usize = response.headers()[header::CONTENT_LENGTH]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let html = text(response).await.unwrap();
+    assert!(html.starts_with("<p>Hi") && html.contains(EVENTS), "{html}");
+    assert_eq!(html.len(), length);
 }

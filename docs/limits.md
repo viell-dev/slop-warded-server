@@ -96,8 +96,13 @@ period, before it closes the connection as above.
 The [development address](./configuration.md#the-development-address) is for a browser on the same
 computer, and not for others:
 
-- It serves plain HTTP/1.1, on loopback addresses only. HTTP/2 and HTTP/3 need HTTPS, and Warded's
-  `secured()` condition does not hold there.
+- It serves plain HTTP, on loopback addresses only. Browsers use HTTP/1.1 there; h2c clients can
+  use HTTP/2. HTTP/2 in browsers and HTTP/3 need HTTPS, and Warded's `secured()` condition does not
+  hold there.
+- It answers only requests for an IP address, `localhost` or a name below `.localhost`. A name for
+  this computer in the hosts file gets a 403, as do requests that other sites make, except to open
+  a page; see [configuration](./configuration.md#the-development-address). There is no setting
+  for other names.
 - Its responses are not compressed, so that pages can get the reload script.
 - Pages reload when the server starts again, and not when a file changes by itself. A watcher such
   as bacon has to restart it, also for files that the server reads, such as those in `static/`.

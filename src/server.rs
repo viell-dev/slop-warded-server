@@ -97,13 +97,28 @@ impl Server {
     /// this computer.
     ///
     /// Browsers open `http://127.0.0.1` without a certificate, and treat it as a secure context, as
-    /// they do `http://localhost`. They use HTTP/1.1 there. Requests carry the security context
-    /// `Unsecure`, so Warded's `secured()` condition does not hold for them. HTML pages reload by
-    /// themselves when the server restarts, unless [`live_reload`](Self::live_reload) is off.
+    /// they do `http://localhost`. They use HTTP/1.1 there; clients that begin with HTTP/2 (h2c)
+    /// can use that. Requests carry the security context `Unsecure`, so Warded's `secured()`
+    /// condition does not hold for them. HTML pages reload by themselves when the server restarts,
+    /// unless [`live_reload`](Self::live_reload) is off.
     ///
     /// The server logs the address to open. It is a listener of its own, beside
     /// [`redirect_http`](Self::redirect_http) or [`serve_http`](Self::serve_http). Nothing on it is
     /// encrypted, so [`bind`](Self::bind) refuses an address that is not loopback.
+    ///
+    /// Any page in the browser can make it send requests to this address, so before the
+    /// application sees a request, the address refuses with a 403, and logs a warning:
+    ///
+    /// - a request for another host than an IP address, `localhost` or a name below `.localhost`,
+    ///   which keeps out other sites whose DNS names point here (DNS rebinding). Names from the
+    ///   hosts file are refused too;
+    /// - a request that the browser marks as made by another site (`Sec-Fetch-Site: cross-site`),
+    ///   unless it opens a page with GET or HEAD, and not into `<object>` or `<embed>`;
+    /// - a request with another method than GET, HEAD, OPTIONS or TRACE, or a WebSocket, whose
+    ///   `Origin` is another host, for browsers that do not send `Sec-Fetch-Site`.
+    ///
+    /// Clients that send none of these fields and name the host as above, such as curl, are not
+    /// affected.
     pub fn development(mut self, address: SocketAddr) -> Self {
         self.development = Some(address);
         self
@@ -364,9 +379,10 @@ impl BoundServer {
             let shared = shared.clone();
             listeners.spawn(async move { tcp::serve_http(listener, app, &shared, "HTTP").await });
         }
-        if let Some(listener) = self.development {
+        if let (Some(listener), Some(address)) = (self.development, self.development_addr) {
             let live_reload = self.server.live_reload;
-            let app = development::app(app.clone(), live_reload, stopping.events.clone());
+            let events = stopping.events.clone();
+            let app = development::app(app.clone(), address, live_reload, events);
             let shared = shared.clone();
             listeners
                 .spawn(async move { tcp::serve_http(listener, app, &shared, "development").await });

@@ -19,7 +19,7 @@ all-features = true
 
 [features]
 default = ["files", "http3", "logging", "middleware", "self-signed", "warded"]
-files = ["dep:tower-http", "tower-http/fs", "tower-http/set-header"]
+files = ["dep:mime_guess", "dep:tower-http", "tower-http/fs", "tower-http/set-header"]
 http3 = ["dep:bytes", "dep:h3", "dep:httpdate", "dep:nix", "dep:quinn"]
 logging = ["dep:tracing-subscriber"]
 middleware = [
@@ -49,6 +49,7 @@ h3 = { version = "=0.0.8", optional = true }
 http = "1.5"
 http-body = "1"
 httpdate = { version = "1", optional = true }
+mime_guess = { version = "2.0.5", optional = true }
 percent-encoding = { version = "2", optional = true }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"], optional = true }
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs"], optional = true }
@@ -92,7 +93,7 @@ required-features = ["self-signed", "warded"]
 
 [[test]]
 name = "development"
-required-features = ["http3", "middleware", "self-signed", "warded"]
+required-features = ["files", "http3", "middleware", "self-signed", "warded"]
 
 [[test]]
 name = "helpers"

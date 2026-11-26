@@ -13,6 +13,10 @@ New projects open in a browser at once, and their code holds no wiring
   Warded's `secured()` does not hold. Its HTML pages reload by themselves when the server restarts,
   unless `live_reload(false)` turns that off, and its responses are not compressed. See
   [configuration](https://viell-dev.github.io/slop-warded-server/configuration.html#the-development-address).
+- **The development address answers only this computer's browser:** a 403 for requests for another
+  host than an IP address, `localhost` or a name below `.localhost` (against DNS rebinding), for
+  those that the browser marks as made by another site, except to open a page, and for changes
+  and WebSockets from another origin.
 - The log says what to open, such as `open http://127.0.0.1:3000/ in a browser`. The `serving` line
   has a `development` field.
 - **Helpers**, over `tracing-subscriber`, `tower-http` and Axum, behind new default features:

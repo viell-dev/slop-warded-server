@@ -48,6 +48,13 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 - **The browser warns about the certificate.** It is the generated one. Open the address that the
   log names with `open http://…` instead, or see [certificates for
   development](./certificates.md#for-development).
+- **A 403 that says `The development address answers only requests for an IP address or
+  localhost`.** The browser used another name for this computer, such as one from the hosts file.
+  Open the address that the log names, or a name below `.localhost`; see [the development
+  address](./configuration.md#the-development-address).
+- **A 403 that says `The development address answers no requests that other sites make`.** A page
+  from another site, or another origin, sent the request. Load the page from the development
+  address itself.
 - **The log names no `http://` address.** The project has no
   [development address](./configuration.md#the-development-address): its `.cargo/config.toml` is
   missing, it was started without Cargo, or `WARDED_DEV_ADDR` is set to something else.
