@@ -83,3 +83,24 @@ async fn the_log_says_what_to_open() {
     );
     assert!(log.contains(&open), "{log}");
 }
+
+#[tokio::test]
+async fn a_length_that_the_content_does_not_have_is_logged() {
+    let authority = Authority::new();
+    let app = axum::Router::new().route(
+        "/",
+        get(|| async { ([(axum::http::header::CONTENT_LENGTH, "6")], "hello") }),
+    );
+    let log = logged(|| async {
+        let running = Running::start(common::server(&authority), app);
+        let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
+            .await
+            .unwrap();
+        let response = client.get("/").await.unwrap();
+        assert_eq!(response.headers()["content-length"], "5");
+    })
+    .await;
+    let warning = "the application declared a Content-Length that its content does not have \
+                   declared=[\"6\"] length=5";
+    assert!(log.contains(warning), "{log}");
+}

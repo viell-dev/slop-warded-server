@@ -103,7 +103,9 @@ where
 /// Give a response the length of its content, and no content that its status rules out (RFC 9110
 /// sections 15.3.5, 15.3.6 and 15.4.5).
 ///
-/// Of the protocol implementations, only Hyper's HTTP/1.1 does most of this.
+/// Of the protocol implementations, only Hyper's HTTP/1.1 does most of this. It sends a length that
+/// the application declares for content of known length, which it checks only in debug builds, by
+/// panicking.
 fn finish(mut response: Response) -> Response {
     match response.status() {
         StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED => {
@@ -113,14 +115,13 @@ fn finish(mut response: Response) -> Response {
         }
         StatusCode::RESET_CONTENT => {
             *response.body_mut() = Body::empty();
-            response.headers_mut().insert(CONTENT_LENGTH, 0.into());
+            frame_by_length(response.headers_mut(), 0);
         }
         status if status.is_informational() => {}
-        _ => {
-            if let Some(length) = response.body().size_hint().exact() {
-                declare_length(response.headers_mut(), length);
-            }
-        }
+        _ => match response.body().size_hint().exact() {
+            Some(length) => declare_length(response.headers_mut(), length),
+            None => keep_declared_length(response.headers_mut()),
+        },
     }
     response
 }
@@ -130,8 +131,8 @@ fn finish(mut response: Response) -> Response {
 /// Axum does for its handlers, but the application can be any service.
 fn finish_head(mut response: Response) -> Response {
     match response.body().size_hint().exact() {
-        // Taken off already, so this says nothing about the content.
-        None | Some(0) => {}
+        // Taken off already, so the application's length is that of the content to GET.
+        None | Some(0) => keep_declared_length(response.headers_mut()),
         Some(length) => declare_length(response.headers_mut(), length),
     }
     *response.body_mut() = Body::empty();
@@ -150,10 +151,46 @@ fn finish_connect(response: Response) -> Response {
     }
 }
 
+/// Declare the length of the content, in place of any other that the application declared.
+///
+/// Hyper would send the application's, which the client then waits for or cuts the content at.
 fn declare_length(headers: &mut HeaderMap, length: u64) {
-    if !headers.contains_key(CONTENT_LENGTH) && !headers.contains_key(TRANSFER_ENCODING) {
-        headers.insert(CONTENT_LENGTH, length.into());
+    if headers.contains_key(CONTENT_LENGTH) && head::declared_length(headers) != Ok(Some(length)) {
+        let declared: Vec<_> = headers.get_all(CONTENT_LENGTH).iter().collect();
+        tracing::warn!(
+            ?declared,
+            length,
+            "the application declared a Content-Length that its content does not have"
+        );
     }
+    frame_by_length(headers, length);
+}
+
+/// Keep the length that the application declared for content of unknown length, as one field, if
+/// it is valid. The protocols check the content against it as it goes out.
+fn keep_declared_length(headers: &mut HeaderMap) {
+    match head::declared_length(headers) {
+        Ok(None) => {}
+        Ok(Some(length)) => frame_by_length(headers, length),
+        Err(_) => {
+            let declared: Vec<_> = headers.get_all(CONTENT_LENGTH).iter().collect();
+            tracing::warn!(
+                ?declared,
+                "the application declared an invalid Content-Length"
+            );
+            headers.remove(CONTENT_LENGTH);
+        }
+    }
+}
+
+/// Make a length the response's only framing.
+///
+/// A `Transfer-Encoding` goes, which is about an HTTP/1.1 connection: RFC 9112 section 6.1 rules out
+/// both together, and HTTP/2 and HTTP/3 have none. Hyper closes an HTTP/1.1 connection without a
+/// response when the application declares both.
+fn frame_by_length(headers: &mut HeaderMap, length: u64) {
+    headers.remove(TRANSFER_ENCODING);
+    headers.insert(CONTENT_LENGTH, length.into());
 }
 
 /// An IPv4 client of a dual-stack listener has an IPv4 address, not an IPv4-mapped IPv6 one.

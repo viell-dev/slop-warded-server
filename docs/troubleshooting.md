@@ -141,6 +141,17 @@ with the reason. Fix the client.
 | `could not select a route … trusted HTTPS context is missing` | A test without the server has to insert [`TransportSecurity`](./testing.md), or the project uses two versions of `warded`; import it from `warded_server` |
 | `the application responded with an informational status`      | The handler returned a 1xx status over HTTP/3                                                                                                             |
 
+## A warning about `Content-Length`
+
+Where the server knows the length of a response's content, it sends that length, whatever the
+application declared. The warning names the application's `declared` values. Leave the field out,
+and the server sets it.
+
+| Log                                                                        | Cause                                                                                                                                      |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `the application declared a Content-Length that its content does not have` | A handler or layer set a `Content-Length` other than its content's length, often after changing the content. The `length` was sent instead |
+| `the application declared an invalid Content-Length`                       | Different values, or one that is not a number, for content whose length is not known. None was sent                                        |
+
 ## Requests fail without a response
 
 The handler panicked. Add [`CatchPanicLayer`](./middleware.md) to answer with a 500, and find the
