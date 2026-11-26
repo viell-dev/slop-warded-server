@@ -11,10 +11,10 @@ hero:
       link: /getting-started
     - theme: alt
       text: Build a JSON API
-      link: /json-api
+      link: /template-api
     - theme: alt
       text: Build a website
-      link: /website
+      link: /template-website
 features:
   - title: Three protocols, one address
     details: HTTP/1.1 and HTTP/2 over TLS, and HTTP/3 over QUIC on the same port, from one certificate and with one graceful shutdown.
@@ -57,9 +57,10 @@ async fn main() -> Result<(), warded_server::Error> {
 }
 ```
 
-[Get started](./getting-started.md) to make a project, or see what to build:
-a [JSON API](./json-api.md), a [website](./website.md), a [single-page app](./single-page-app.md)
-with its API, or [an existing Axum application](./existing-axum.md) with more protocols.
+Pick a template to make your first changes: [minimal](./template-minimal.md),
+[API](./template-api.md) or [website](./template-website.md). You can also serve a
+[single-page app](./single-page-app.md) with its API or run an [existing Axum
+application](./existing-axum.md) with more protocols.
 
 ::: warning Alpha
 Everything may still change, and HTTP/3 rests on an experimental library with [known

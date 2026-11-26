@@ -23,6 +23,10 @@ macro_rules! pages {
 pages! {
     Index => "index.md",
     GettingStarted => "getting-started.md",
+    TemplateMinimal => "template-minimal.md",
+    TemplateApi => "template-api.md",
+    TemplateWebsite => "template-website.md",
+    Glossary => "glossary.md",
     JsonApi => "json-api.md",
     Website => "website.md",
     SinglePageApp => "single-page-app.md",
