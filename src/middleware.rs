@@ -19,8 +19,8 @@ type Panic = Box<dyn Any + Send + 'static>;
 
 /// Logging, compression and a 500 for panics: the middleware that most applications start with.
 ///
-/// Add it to the router that [`app`](crate::app) returns, or to any `axum::Router`, so that it
-/// sees every request. From the outside in, it is these layers from
+/// Add it to the router that `app` returns, or to any `axum::Router`, so that it sees every
+/// request. From the outside in, it is these layers from
 /// [`tower-http`](https://docs.rs/tower-http):
 ///
 /// - `TraceLayer` logs each request, at the `info` level, with its method, target, version, status
@@ -113,7 +113,7 @@ where
                     .downcast_ref::<String>()
                     .map(String::as_str)
                     .or_else(|| panic.downcast_ref::<&str>().copied());
-                tracing::error!(message, "a handler panicked");
+                tracing::error!(panic = message, "a handler panicked");
                 respond(panic)
             }))
             .service(inner);
