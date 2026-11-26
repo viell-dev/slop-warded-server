@@ -38,6 +38,7 @@ use tower_http::services::ServeDir;
 /// # }
 /// ```
 #[derive(Clone, Debug)]
+#[must_use = "files are served only as the destination of a route"]
 pub struct StaticFiles {
     prefix: String,
     directory: PathBuf,
@@ -279,12 +280,6 @@ mod spa {
                 .route(get_or_head(), others)
                 .fallback(any(|| async { StatusCode::NOT_FOUND }));
             crate::app(routes)
-        }
-    }
-
-    impl From<SinglePageApp> for axum::Router {
-        fn from(app: SinglePageApp) -> Self {
-            app.into_router()
         }
     }
 
