@@ -36,9 +36,10 @@ New projects open in a browser at once, and their code holds no wiring
   - Projects from earlier templates keep working. To take the new start into one, add the
     `.cargo/config.toml` of its template.
 
-Requests that the HTTP specifications call malformed no longer reach the application, so that it
-and its routes see the same request on every protocol. They get a 400, which says why, and over
-HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
+Requests and responses keep the rules of HTTP, so that the application and its routes see the same
+request on every protocol, and clients get the true length of a response. Requests that the
+specifications call malformed no longer reach the application: they get a 400, which says why, and
+over HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
 
 - **Whitespace around a field value**, such as `x-tenant: acme<TAB>`, is refused over HTTP/2 and
   HTTP/3. HTTP/1.1 removes it, as before
@@ -50,15 +51,13 @@ HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
   `GET http://example.com/ HTTP/1.1` does, the `Host` field that the application sees has that
   host. Over HTTP/2 and HTTP/3, a `Host` field has to name the host of `:authority`, and a target
   with user information, such as `user@example.com`, is refused on every protocol.
-
-Responses declare their true length
-([#28](https://github.com/viell-dev/slop-warded-server/issues/28)). A `Content-Length` that an
-application sets for content of known length, and that is not its length, made debug builds panic
-over HTTP/1.1, with no response, and release builds send the false length. The length of the
-content now replaces it, and the log warns. A `Transfer-Encoding` beside a length goes too, which
-closed HTTP/1.1 connections without a response. Repeated `Content-Length` fields become one, which
-HTTP/1.1 also sent no response to HEAD for, and invalid ones for content of unknown length go, with
-a warning.
+- **Response lengths** ([#28](https://github.com/viell-dev/slop-warded-server/issues/28)): a
+  `Content-Length` that the application set for content of known length, and that was not its
+  length, made debug builds panic over HTTP/1.1, with no response, and release builds send the
+  false length. The length of the content now replaces it, and the log warns. A
+  `Transfer-Encoding` beside a length goes, which closed HTTP/1.1 connections without a response.
+  Repeated equal `Content-Length` fields become one, where HTTP/1.1 sent no response to HEAD.
+  Invalid ones for content of unknown length go, with a warning.
 
 ## 0.1.0-alpha.2 - 2026-11-25
 
