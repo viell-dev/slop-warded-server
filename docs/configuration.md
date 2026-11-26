@@ -74,8 +74,24 @@ It has to be a loopback address, such as `127.0.0.1` or `[::1]`, because nothing
 encrypted. The log names the IP address rather than `localhost`, which some systems resolve to
 IPv6 first. Things to know about it:
 
-- **Browsers use HTTP/1.1 there.** Use HTTPS for HTTP/2 and HTTP/3; it keeps running at the same
-  time.
+- **Browsers use HTTP/1.1 there.** Clients that begin with HTTP/2 without TLS (h2c), such as
+  `curl --http2-prior-knowledge`, can use that. Use HTTPS for HTTP/2 in browsers and for HTTP/3;
+  it keeps running at the same time.
+- **Only for this computer, also in the browser.** Any page in the browser can make it send
+  requests to this address, so the address answers 403 to those that another site could have
+  caused:
+  - **for another host** than an IP address, `localhost` or a name below `.localhost`, such as
+    `app.localhost`. Another site's DNS name can lead to `127.0.0.1` (DNS rebinding), and so do
+    names in the hosts file, which are refused too. Open the address that the log names, or use a
+    name below `.localhost`.
+  - **from another site**, as the browser says with `Sec-Fetch-Site: cross-site`, unless the request
+    opens a page with GET or HEAD. Links to the address from elsewhere work; scripts, forms that
+    send POST, and `<object>` or `<embed>` on other sites do not.
+  - **changes from another origin**, for browsers that do not send `Sec-Fetch-Site`: methods other
+    than GET, HEAD, OPTIONS and TRACE, and WebSockets, whose `Origin` names another host.
+
+  curl and other clients that send none of these fields are not affected. Each refusal is logged
+  as a warning.
 - **Requests are not secured**, so routes with Warded's `secured()` condition do not match, and
   those with `unsecure()` do.
 - **HTML pages reload by themselves** when the server starts again. Each page that a browser opens

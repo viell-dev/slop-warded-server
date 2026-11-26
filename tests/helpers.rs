@@ -2,6 +2,7 @@
 
 mod common;
 
+use axum::http::Version;
 use axum::{
     Json,
     body::Body,
@@ -158,7 +159,15 @@ async fn static_files_are_served_and_stay_in_their_directory() {
             get_or_head().and(path("/static/{*file}").unwrap()),
             files.clone().not_found(missing_with_200.into_service()),
         )
-        .route(get_or_head().and(path("/plain/{*file}").unwrap()), files)
+        .route(
+            get_or_head().and(path("/plain/{*file}").unwrap()),
+            files.clone(),
+        )
+        // A prefix that is not the one of the files.
+        .route(
+            get_or_head().and(path("/other/{*file}").unwrap()),
+            files.not_found(missing_with_200.into_service()),
+        )
         .fallback(not_found.into_service());
     let running = Running::start(common::server(&authority), app(routes));
     for version in VERSIONS {
@@ -171,8 +180,15 @@ async fn static_files_are_served_and_stay_in_their_directory() {
         assert_eq!(text(response).await.unwrap(), "main { margin: auto }");
 
         let mut missing = escapes("/static");
-        missing
-            .extend(["/static/none.css", "/static/", "/static/static/style.css"].map(String::from));
+        missing.extend(
+            [
+                "/static/none.css",
+                "/static/",
+                "/static/static/style.css",
+                "/other/style.css",
+            ]
+            .map(String::from),
+        );
         for path in missing {
             let response = client.get(&path).await.unwrap();
             assert_eq!(
@@ -208,6 +224,7 @@ fn build() -> tempfile::TempDir {
     write("assets/app.1a2b.js", "start()");
     write("assets/index.html", "not a page of the app");
     write("assets/nested/index.html", "not a page either");
+    write("assets/page.shtml", "an HTML page by its type");
     std::fs::write(root.path().join("secret.txt"), "secret").unwrap();
     root
 }
@@ -265,16 +282,25 @@ async fn a_single_page_app_answers_each_kind_of_request() {
             false,
             "start()",
         ),
-        // HTML keeps its name, so it is not kept.
+        // HTML keeps its name, so browsers must check it again.
         (
             "/assets/index.html",
             BROWSER,
             200,
-            None,
+            Some("no-cache"),
             false,
             "not a page of the app",
         ),
+        (
+            "/assets/page.shtml",
+            BROWSER,
+            200,
+            Some("no-cache"),
+            false,
+            "an HTML page by its type",
+        ),
         ("/assets/nested/", BROWSER, 404, None, false, ""),
+        ("/assets/nested", BROWSER, 404, None, false, ""),
         ("/assets/old.js", "*/*", 404, None, false, ""),
         ("/assets/", BROWSER, 404, None, false, ""),
         ("/assets", BROWSER, 404, None, false, ""),
@@ -339,6 +365,65 @@ async fn a_single_page_app_answers_each_kind_of_request() {
         );
         assert_eq!(text(response).await.unwrap(), "");
     }
+}
+
+#[tokio::test]
+async fn html_in_the_assets_is_never_kept_by_another_name() {
+    let authority = Authority::new();
+    let root = build();
+    let app = single_page_app(&root.path().join("dist"));
+    let running = Running::start(common::server(&authority), app);
+    let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
+        .await
+        .unwrap();
+    let get_with = async |client: &mut Client, path: &str, tag: Option<&HeaderValue>| {
+        let mut request = get(path);
+        if let Some(tag) = tag {
+            request
+                .headers_mut()
+                .insert(header::IF_NONE_MATCH, tag.clone());
+        }
+        let response = client.send(request).await.unwrap();
+        let fields = response.headers().clone();
+        let status = response.status();
+        soon(response.into_body().collect()).await.unwrap();
+        (status, fields)
+    };
+    let cache = |fields: &axum::http::HeaderMap| fields.get(header::CACHE_CONTROL).cloned();
+
+    // Names that lead to `assets/index.html` everywhere, and those that do on Windows alone.
+    let everywhere = ["/assets/index.%68tml", "/assets/nested%2Findex.html"];
+    let on_windows = [
+        "/assets/INDEX.HTML",
+        "/assets/index.html.",
+        "/assets/index.html%20",
+        "/assets/index.html::$DATA",
+    ];
+    for path in everywhere.iter().chain(&on_windows) {
+        let (status, fields) = get_with(&mut client, path, None).await;
+        let served = everywhere.contains(path) || cfg!(windows);
+        if served {
+            assert_eq!(status, StatusCode::OK, "{path} {fields:?}");
+        }
+        if status == StatusCode::OK {
+            assert_eq!(cache(&fields).unwrap(), "no-cache", "{path}");
+            // So is the answer to a request that asks whether it changed.
+            let tag = fields.get(header::ETAG);
+            let (status, fields) = get_with(&mut client, path, tag).await;
+            assert_eq!(status, StatusCode::NOT_MODIFIED, "{path}");
+            assert_eq!(cache(&fields).unwrap(), "no-cache", "{path}");
+        } else {
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(cache(&fields), None, "{path}");
+        }
+    }
+
+    // Files with hashed names stay kept when they are checked again.
+    let (_, fields) = get_with(&mut client, "/assets/app.1a2b.js", None).await;
+    let tag = fields.get(header::ETAG);
+    let (status, fields) = get_with(&mut client, "/assets/app.1a2b.js", tag).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert_eq!(cache(&fields).unwrap(), FOREVER);
 }
 
 #[test]

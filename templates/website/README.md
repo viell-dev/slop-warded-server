@@ -28,8 +28,9 @@ bacon run-long
 
 bacon watches `src/`, and `templates/` and `static/` too, as `bacon.toml` says.
 
-The development address uses HTTP/1.1, and its requests are not secured, so routes with Warded's
-`secured()` condition do not match there.
+Browsers use HTTP/1.1 on the development address, and its requests are not secured, so routes
+with Warded's `secured()` condition do not match there. It answers only requests for an IP address
+or `localhost`, and none that other sites make, except to open a page.
 
 ## Layout
 

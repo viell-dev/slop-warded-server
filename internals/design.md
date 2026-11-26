@@ -72,6 +72,14 @@ development setting becomes a deployed one.
 - **The IP address in the log**, rather than `localhost`, which some systems resolve to IPv6 first,
   where an IPv4 listener refuses. Binding both families instead needs a second socket, which fails
   where IPv6 is off, as in some containers.
+- **Loopback is not a boundary in the browser.** Any page can make the browser send requests to
+  `127.0.0.1`, and a DNS name whose answer changes to `127.0.0.1` makes them same-origin for that
+  page (DNS rebinding). So the address refuses, before the application and the reload stream,
+  requests for other hosts than IP addresses, `localhost` and names below `.localhost`, as Vite's
+  `server.allowedHosts` does; rebinding needs a name that the attacker's DNS answers. It also
+  follows Fetch Metadata's resource isolation policy, and, for browsers without it, refuses changes
+  and WebSockets whose `Origin` is another host. Names from the hosts file are refused with the
+  rest: a setting for them waits until someone needs one.
 
 ### Live reload
 
@@ -80,6 +88,8 @@ page when the stream comes back after it was gone. A restart is what brings it b
 does not watch files. It is applied by the library on the development address alone, so that HTTPS
 serves what a deployment serves.
 
+- **Only whole pages.** Not a range (`Range`, 206), whose length and offsets the script would
+  break, and not responses without content.
 - **No compression there.** The script can only be added to an uncompressed page, and the
   application can be any service, whose compression the library cannot reach into. So requests on
   the development address ask for `identity`. Compression gains nothing on loopback.
@@ -114,8 +124,10 @@ can turn off.
   name to agree on.
 - **`SinglePageApp` serves files at the top of the build before `index.html`**, so that a browser
   that opens `/favicon.svg` gets it. Files in `assets/` are kept for a year, unless they are
-  missing, which a later build may change, or HTML, which keeps its name. That is decided by the
-  path, so it also holds for a 304.
+  missing, which a later build may change, or HTML, which keeps its name and gets `no-cache`. HTML
+  is told by the name that the file system uses, which a 304 has too: decoded as `ServeDir` decodes
+  it, and without what Windows ignores, which is case, trailing dots and spaces, and a stream after
+  `:`. The content type of a 200 counts too.
 
 ## The HTTP/3 bridge is our own
 

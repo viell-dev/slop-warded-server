@@ -202,6 +202,19 @@ impl Client {
         .await
     }
 
+    /// HTTP/2 without TLS, from the first byte (h2c with prior knowledge).
+    pub async fn plain_http2(address: SocketAddr) -> Result<Self, BoxError> {
+        soon(async {
+            let stream = TcpStream::connect(address).await?;
+            let (send, connection) =
+                hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                    .await?;
+            tokio::spawn(connection);
+            Ok(Self::Http2(send))
+        })
+        .await
+    }
+
     /// Send a request and wait for the response head. Bodies are streamed both ways.
     pub async fn send(&mut self, request: Request<Body>) -> Result<Response<Body>, BoxError> {
         soon(async {

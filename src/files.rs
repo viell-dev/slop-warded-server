@@ -2,6 +2,7 @@
 
 use axum::{
     extract::Request,
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use std::{
@@ -9,7 +10,7 @@ use std::{
     path::PathBuf,
     task::{Context, Poll},
 };
-use tower::Service;
+use tower::{Service, util::MapResponseLayer};
 use tower_http::services::ServeDir;
 
 /// The files in a directory, as a destination for a route below a path such as `/static`.
@@ -68,15 +69,17 @@ impl StaticFiles {
 
     /// Answer with this service where there is no file, such as the site's page for a 404.
     ///
-    /// Its responses get the status 404, whatever it answers.
+    /// Its responses get the status 404, whatever it answers, also for a path outside the prefix.
     pub fn not_found<S>(mut self, page: S) -> Self
     where
         S: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
         S::Response: IntoResponse,
         S::Future: Send + 'static,
     {
-        let page = axum::Router::new().fallback_service(page);
-        let files = ServeDir::new(&self.directory).not_found_service(page.clone());
+        let page = axum::Router::new()
+            .fallback_service(page)
+            .layer(MapResponseLayer::new(not_found as fn(Response) -> Response));
+        let files = ServeDir::new(&self.directory).fallback(page.clone());
         self.router = axum::Router::new()
             .nest_service(&self.prefix, files)
             // For a route whose path does not begin with the prefix.
@@ -99,6 +102,11 @@ impl Service<Request> for StaticFiles {
     }
 }
 
+fn not_found(mut response: Response) -> Response {
+    *response.status_mut() = StatusCode::NOT_FOUND;
+    response
+}
+
 /// A path prefix, such as `/static`, below which something is served.
 fn check_prefix(prefix: &str) {
     assert!(
@@ -117,13 +125,17 @@ mod spa {
         extract::Request,
         http::{
             HeaderValue, StatusCode,
-            header::{CACHE_CONTROL, VARY},
+            header::{CACHE_CONTROL, CONTENT_TYPE, VARY},
         },
         middleware::{Next, from_fn},
         response::{IntoResponse, Response},
         routing::any,
     };
-    use std::{convert::Infallible, path::PathBuf};
+    use percent_encoding::percent_decode_str;
+    use std::{
+        convert::Infallible,
+        path::{Component, Path, PathBuf},
+    };
     use tower::Service;
     use tower_http::{
         services::{ServeDir, ServeFile},
@@ -143,7 +155,7 @@ mod spa {
     ///
     /// 1. Below the prefix of the [API](Self::api), by the API, whose 404s stay 404s.
     /// 2. Below `/assets`, by the files with hashed names in `assets/`, which may be kept for a
-    ///    year. The name is the [`assets`](Self::assets) setting.
+    ///    year, except HTML. The name is the [`assets`](Self::assets) setting.
     /// 3. Other files at the top of the build, such as `favicon.svg`.
     /// 4. Pages that a browser opens, which prefer HTML, by `index.html`.
     /// 5. A 404 for everything else, also for scripts that ask for a wrong address.
@@ -204,16 +216,21 @@ mod spa {
 
         /// The directory in the build whose files have hashed names, served below the same path.
         ///
-        /// Default: `assets`, as Vite names it. Its files may be kept for a year, except HTML.
+        /// Default: `assets`, as Vite names it. Its files may be kept for a year, except HTML,
+        /// which browsers must check again (`Cache-Control: no-cache`).
         ///
         /// # Panics
         ///
-        /// If the name is empty, or not a relative path inside the build.
+        /// If the name is not a relative directory inside the build in the same form on every
+        /// system: names separated by `/`, without `.`, `..`, `\`, `:` or empty ones.
         pub fn assets(mut self, directory: &str) -> Self {
             let inside = !directory.is_empty()
-                && directory
-                    .split('/')
-                    .all(|part| !matches!(part, "" | "." | ".."));
+                && !directory.contains(['\\', ':'])
+                && directory.split('/').all(|part| {
+                    let mut components = Path::new(part).components();
+                    matches!(components.next(), Some(Component::Normal(_)))
+                        && components.next().is_none()
+                });
             assert!(
                 inside,
                 "the assets are a directory inside the build, such as `assets`: {directory:?}"
@@ -293,19 +310,113 @@ mod spa {
 
     /// Let browsers keep the files with hashed names, which never change.
     ///
-    /// Not missing files, which a later build may bring, and not HTML, which keeps its name.
+    /// Not missing files, which a later build may bring, and not HTML, which keeps its name and
+    /// gets `no-cache`. HTML is told by the file's name, which a 304 also has, and by the content
+    /// type of a 200.
     async fn cache_assets(request: Request, next: Next) -> Response {
-        let path = request.uri().path().to_ascii_lowercase();
-        let html = path.ends_with(".html") || path.ends_with(".htm");
+        let named_html = names_html(request.uri().path());
         let mut response = next.run(request).await;
         let found = response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED;
-        if found && !html {
-            let forever = HeaderValue::from_static("public, max-age=31536000, immutable");
-            response
-                .headers_mut()
-                .entry(CACHE_CONTROL)
-                .or_insert(forever);
+        if !found {
+            return response;
         }
+        let typed_html = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(is_html);
+        let policy = if named_html || typed_html {
+            HeaderValue::from_static("no-cache")
+        } else {
+            HeaderValue::from_static("public, max-age=31536000, immutable")
+        };
         response
+            .headers_mut()
+            .entry(CACHE_CONTROL)
+            .or_insert(policy);
+        response
+    }
+
+    /// Whether the file that a path leads to has the name of an HTML file, as the file system
+    /// sees it.
+    ///
+    /// `ServeDir` decodes the path, and Windows ignores case, trailing dots and spaces, and what
+    /// follows a `:`, which names a stream of the file. A path that ends in a directory counts as
+    /// HTML too.
+    fn names_html(path: &str) -> bool {
+        let path = percent_decode_str(path).decode_utf8_lossy();
+        let name = path.rsplit(['/', '\\']).next().unwrap_or_default();
+        let name = name.split(':').next().unwrap_or_default();
+        let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+        name.is_empty()
+            || mime_guess::from_path(&name)
+                .first_raw()
+                .is_some_and(is_html)
+    }
+
+    fn is_html(media_type: &str) -> bool {
+        let media_type = media_type.trim_start().to_ascii_lowercase();
+        media_type.starts_with("text/html") || media_type.starts_with("application/xhtml+xml")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn html_is_known_by_the_name_that_the_file_system_uses() {
+            for path in [
+                "/assets/index.html",
+                "/assets/INDEX.HTM",
+                "/assets/index.%68tml",
+                "/assets/index.html.",
+                "/assets/index.html%20",
+                "/assets/index.html. .",
+                "/assets/index.html::$DATA",
+                "/assets/index.html:stream",
+                "/assets/sub%2Findex.html",
+                "/assets/sub%5Cindex.html",
+                "/assets/page.shtml",
+                "/assets/page.xhtml",
+                "/assets/sub/",
+                "/assets/",
+            ] {
+                assert!(names_html(path), "{path}");
+            }
+            for path in [
+                "/assets/app.1a2b.js",
+                "/assets/style.css",
+                "/assets/html",
+                "/assets/index.html.js",
+            ] {
+                assert!(!names_html(path), "{path}");
+            }
+        }
+
+        #[test]
+        fn the_assets_stay_inside_the_build() {
+            for directory in ["assets", "static/js", "_app"] {
+                let _ = SinglePageApp::new("dist").assets(directory);
+            }
+            for directory in [
+                "",
+                ".",
+                "..",
+                "./assets",
+                "assets/..",
+                "a//b",
+                "/assets",
+                "assets/",
+                "..\\outside",
+                "C:\\outside",
+                "C:outside",
+                "\\\\server\\share",
+                "a\\b",
+            ] {
+                let refused =
+                    std::panic::catch_unwind(|| SinglePageApp::new("dist").assets(directory));
+                assert!(refused.is_err(), "{directory:?}");
+            }
+        }
     }
 }

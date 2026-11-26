@@ -100,7 +100,7 @@ the `main` above belong in a test. To run the listing as it is, save it as `exam
 template does, for logging and compression.
 
 For build tools that put the files with generated names elsewhere, name that directory with
-`assets`, as in `SinglePageApp::new("dist").assets("static")`. Its HTML files are never kept, in
+`assets`, as in `SinglePageApp::new("dist").assets("static")`. Its HTML files get `no-cache`, in
 case it holds pages too.
 
 ## During development

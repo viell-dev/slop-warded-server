@@ -2547,6 +2547,7 @@ dependencies = [
  "httpdate",
  "hyper",
  "hyper-util",
+ "mime_guess",
  "nix",
  "percent-encoding",
  "quinn",
