@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{% if problems.any() %}Error: {% endif %}{{ title }}{% endblock %}
+{% block content %}
+{% if problems.any() %}
+<div class="problems">
+  <h2>Correct the form</h2>
+  <ul>
+    {% if let Some(problem) = problems.name %}<li><a href="#name">{{ problem }}</a></li>{% endif %}
+    {% if let Some(problem) = problems.email %}<li><a href="#email">{{ problem }}</a></li>{% endif %}
+    {% if let Some(problem) = problems.text %}<li><a href="#text">{{ problem }}</a></li>{% endif %}
+  </ul>
+</div>
+{% else %}
+<p>Write to us, and we answer by e-mail.</p>
+{% endif %}
+{# The server checks the form, so that its messages are the same in every browser. #}
+<form method="post" action="/contact" novalidate>
+  <p class="field">
+    <label for="name">Name</label>
+    <input id="name" name="name" autocomplete="name" required value="{{ message.name }}"
+      {%- if let Some(problem) = problems.name %} aria-invalid="true" aria-describedby="name-problem"{% endif %}>
+    {% if let Some(problem) = problems.name %}<span class="problem" id="name-problem">{{ problem }}</span>{% endif %}
+  </p>
+  <p class="field">
+    <label for="email">E-mail address</label>
+    <input id="email" name="email" type="email" autocomplete="email" required value="{{ message.email }}"
+      {%- if let Some(problem) = problems.email %} aria-invalid="true" aria-describedby="email-problem"{% endif %}>
+    {% if let Some(problem) = problems.email %}<span class="problem" id="email-problem">{{ problem }}</span>{% endif %}
+  </p>
+  <p class="field">
+    <label for="text">Message</label>
+    <textarea id="text" name="text" rows="6" required
+      {%- if let Some(problem) = problems.text %} aria-invalid="true" aria-describedby="text-problem"{% endif %}>{{ message.text }}</textarea>
+    {% if let Some(problem) = problems.text %}<span class="problem" id="text-problem">{{ problem }}</span>{% endif %}
+  </p>
+  <p><button type="submit">Send</button></p>
+</form>
+{% endblock %}

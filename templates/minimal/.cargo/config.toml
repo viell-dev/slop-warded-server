@@ -1,0 +1,6 @@
+# Settings for `cargo run` and other Cargo commands in this project. A program that is started
+# without Cargo, as when it is deployed, does not get them.
+[env]
+# Serve the application over plain HTTP for a browser on this computer, besides HTTPS. A variable
+# that is set already takes precedence; set it empty to turn this off.
+WARDED_DEV_ADDR = "127.0.0.1:3000"

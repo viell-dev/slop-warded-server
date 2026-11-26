@@ -3,45 +3,48 @@ use axum::{
     body::Body,
     http::{
         Request, StatusCode,
-        header::{
-            ACCEPT_ENCODING, ACCEPT_LANGUAGE, CONTENT_ENCODING, CONTENT_LANGUAGE, CONTENT_TYPE,
-            VARY,
-        },
+        header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, LOCATION},
     },
     response::Response,
 };
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-async fn get(uri: &str, language: &str) -> Response {
-    let request = Request::builder()
-        .uri(uri)
-        .header(ACCEPT_LANGUAGE, language)
-        .body(Body::empty())
-        .unwrap();
-    app().unwrap().oneshot(request).await.unwrap()
+async fn send(method: &str, uri: &str, form: Option<&str>) -> Response {
+    let request = Request::builder().method(method).uri(uri);
+    let request = match form {
+        Some(form) => request
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(form.to_owned())),
+        None => request.body(Body::empty()),
+    };
+    app().unwrap().oneshot(request.unwrap()).await.unwrap()
+}
+
+async fn html(response: Response) -> String {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    String::from_utf8(body.to_vec()).unwrap()
 }
 
 #[tokio::test]
-async fn the_home_page_follows_the_visitor() {
-    for (language, expected) in [("sv-SE, en;q=0.5", "sv"), ("en", "en"), ("de", "en")] {
-        let response = get("/", language).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[CONTENT_LANGUAGE], expected, "{language}");
-        let mut vary = response.headers().get_all(VARY).iter();
-        assert!(vary.any(|field| field == "accept-language"));
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let html = String::from_utf8(body.to_vec()).unwrap();
-        assert!(
-            html.contains(&format!("<html lang=\"{expected}\">")),
-            "{html}"
-        );
+async fn the_pages_mark_where_the_visitor_is() {
+    for (uri, current) in [
+        ("/", r#"<a href="/" aria-current="page">"#),
+        ("/about", r#"<a href="/about" aria-current="page">"#),
+        ("/contact", r#"<a href="/contact" aria-current="page">"#),
+    ] {
+        let response = send("GET", uri, None).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        assert_eq!(response.headers()[CONTENT_TYPE], "text/html; charset=utf-8");
+        let html = html(response).await;
+        assert!(html.contains(current), "{uri}: {html}");
+        assert_eq!(html.matches("aria-current").count(), 1, "{uri}");
     }
 }
 
 #[tokio::test]
 async fn head_has_the_head_of_get() {
-    for uri in ["/", "/none"] {
+    for uri in ["/", "/about", "/none"] {
         let send = async |method: &str| {
             let request = Request::builder()
                 .method(method)
@@ -58,8 +61,47 @@ async fn head_has_the_head_of_get() {
 }
 
 #[tokio::test]
+async fn the_form_shows_its_problems_until_it_is_right() {
+    let response = send("POST", "/contact", Some("name=&email=someone&text=Hello")).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = html(response).await;
+    assert!(html.contains("<title>Error: Contact</title>"), "{html}");
+    assert!(html.contains("Enter your name."), "{html}");
+    assert!(html.contains("Enter an e-mail address"), "{html}");
+    // What the visitor entered stays, and the fields with problems say so.
+    assert!(
+        html.contains(r#"value="someone" aria-invalid="true""#),
+        "{html}"
+    );
+    assert!(html.contains(">Hello</textarea>"), "{html}");
+    assert_eq!(html.matches(r#"aria-invalid="true""#).count(), 2, "{html}");
+
+    // Not a form at all.
+    let response = send("POST", "/contact", None).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let form = "name=Ada&email=ada%40example.com&text=Hello";
+    let response = send("POST", "/contact", Some(form)).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()[LOCATION], "/contact/sent");
+    let response = send("GET", "/contact/sent", None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn values_are_escaped() {
+    let form = "name=%3Cscript%3E&email=x&text=%22%3E%3Cb%3E";
+    let html = html(send("POST", "/contact", Some(form)).await).await;
+    assert!(
+        !html.contains("<script>") && !html.contains("<b>"),
+        "{html}"
+    );
+    assert!(html.contains("&#60;script&#62;"), "{html}");
+}
+
+#[tokio::test]
 async fn static_files_are_served() {
-    let response = get("/static/style.css", "en").await;
+    let response = send("GET", "/static/style.css", None).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[CONTENT_TYPE], "text/css");
     for missing in [
@@ -67,15 +109,27 @@ async fn static_files_are_served() {
         "/static/../Cargo.toml",
         "/static/%2e%2e/Cargo.toml",
     ] {
-        let response = get(missing, "en").await;
+        let response = send("GET", missing, None).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{missing}");
-        assert_eq!(response.headers()[CONTENT_TYPE], "text/html; charset=utf-8");
+        assert!(html(response).await.contains("Page not found"), "{missing}");
     }
 }
 
 #[tokio::test]
 async fn other_paths_get_the_not_found_page() {
-    let response = get("/none", "en").await;
+    let response = send("GET", "/none", None).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(response.headers()[CONTENT_TYPE], "text/html; charset=utf-8");
+    assert!(html(response).await.contains("<h1>Page not found</h1>"));
+}
+
+#[tokio::test]
+async fn a_panic_gets_the_error_page() {
+    let response = pages::error(Box::new("a mistake"));
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        html(response)
+            .await
+            .contains("<h1>Something went wrong</h1>")
+    );
 }

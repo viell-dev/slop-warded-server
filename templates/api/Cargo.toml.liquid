@@ -9,9 +9,6 @@ publish = false
 axum = { version = "0.8.9", features = ["macros"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = "0.5"
-tower-http = { version = "0.7", features = ["catch-panic", "compression-br", "compression-gzip", "trace"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.2" }
 
 [dev-dependencies]

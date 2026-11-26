@@ -1,11 +1,125 @@
+/* Colours with a contrast of at least 4.5 to 1 for text, in light and dark mode. */
 :root {
   color-scheme: light dark;
+  --text: #1f2328;
+  --quiet: #57606a;
+  --background: #ffffff;
+  --field: #ffffff;
+  --accent: #0b5cad;
+  --problem: #b3261e;
   font-family: system-ui, sans-serif;
   line-height: 1.5;
 }
 
-main {
-  margin: 4rem auto;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e6edf3;
+    --quiet: #9da7b3;
+    --background: #0d1117;
+    --field: #161b22;
+    --accent: #6cb6ff;
+    --problem: #ff8a80;
+  }
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--background);
+}
+
+header,
+main,
+footer {
   max-width: 40rem;
+  margin: 0 auto;
   padding: 0 1rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skip {
+  position: absolute;
+  left: -100vw;
+}
+
+.skip:focus {
+  left: 1rem;
+  top: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--background);
+}
+
+nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 0;
+  padding: 1.5rem 0;
+  list-style: none;
+  border-bottom: 1px solid var(--quiet);
+}
+
+nav a[aria-current="page"] {
+  color: var(--text);
+  font-weight: bold;
+  text-decoration: none;
+}
+
+footer {
+  margin-top: 4rem;
+  color: var(--quiet);
+}
+
+.field label {
+  display: block;
+  font-weight: bold;
+}
+
+input,
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--quiet);
+  border-radius: 4px;
+}
+
+[aria-invalid="true"] {
+  border: 2px solid var(--problem);
+}
+
+.problem {
+  display: block;
+  color: var(--problem);
+}
+
+.problems {
+  padding: 0 1rem;
+  border-left: 4px solid var(--problem);
+}
+
+.problems a {
+  color: var(--problem);
+}
+
+button {
+  padding: 0.5rem 1.5rem;
+  font: inherit;
+  font-weight: bold;
+  color: var(--background);
+  background: var(--accent);
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
 }

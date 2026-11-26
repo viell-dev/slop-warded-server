@@ -3,11 +3,31 @@
 A JSON API. It serves HTTP/1.1, HTTP/2 and HTTP/3 with
 [Warded Server](https://github.com/viell-dev/slop-warded-server).
 
+## Start
+
 ```sh
 cargo run
-curl --insecure --json '{"text": "milk"}' https://localhost:8443/notes
-curl --insecure https://localhost:8443/notes
 ```
+
+When the log says `open http://127.0.0.1:3000/ in a browser`, open that address. It is plain HTTP
+for this computer alone, so there is no certificate to accept. HTTPS, with HTTP/2 and HTTP/3, runs
+at the same time on `https://localhost:8443/`, with a certificate that no client trusts:
+
+```sh
+curl --json '{"text": "milk"}' http://127.0.0.1:3000/notes
+curl http://127.0.0.1:3000/notes
+curl --insecure --http2 https://localhost:8443/notes
+```
+
+`/` lists the endpoints. Stop the server with Ctrl+C. To restart it after each change, install
+[bacon](https://dystroy.org/bacon/) once, and run it in place of `cargo run`. Quit it with `q`.
+
+```sh
+cargo install --locked bacon
+bacon run-long
+```
+
+Responses are JSON, and not HTML, so reload them in the browser yourself.
 
 ## Layout
 
@@ -15,20 +35,26 @@ curl --insecure https://localhost:8443/notes
 - `src/routes.rs`: the routes and the middleware, with their tests below.
 - `src/notes.rs`: an example resource, kept in memory. Replace it with yours.
 - `src/problem.rs`: errors as JSON.
+- `.cargo/config.toml`: the development address for `cargo run`.
 
 ## Configuration
 
 Set these environment variables to run it elsewhere:
 
-| Variable             | Meaning                                    | Default          |
-| -------------------- | ------------------------------------------ | ---------------- |
-| `WARDED_HTTPS_ADDR`  | HTTPS address, over TCP and UDP            | `127.0.0.1:8443` |
-| `WARDED_HTTP_ADDR`   | Cleartext address that redirects to HTTPS  | none             |
-| `WARDED_TLS_CERT`    | PEM certificate chain file                 | generated        |
-| `WARDED_TLS_KEY`     | PEM private key file                       | generated        |
-| `WARDED_HTTP3`       | `on` or `off`                              | `on`             |
-| `WARDED_PUBLIC_PORT` | HTTPS port that clients use, if it differs | the bound port   |
-| `RUST_LOG`           | What to log                                | see `main.rs`    |
+| Variable             | Meaning                                    | Default                           |
+| -------------------- | ------------------------------------------ | --------------------------------- |
+| `WARDED_HTTPS_ADDR`  | HTTPS address, over TCP and UDP            | `127.0.0.1:8443`                  |
+| `WARDED_HTTP_ADDR`   | Cleartext address that redirects to HTTPS  | none                              |
+| `WARDED_DEV_ADDR`    | Plain HTTP address for this computer       | `127.0.0.1:3000` with `cargo run` |
+| `WARDED_TLS_CERT`    | PEM certificate chain file                 | generated                         |
+| `WARDED_TLS_KEY`     | PEM private key file                       | generated                         |
+| `WARDED_HTTP3`       | `on` or `off`                              | `on`                              |
+| `WARDED_PUBLIC_PORT` | HTTPS port that clients use, if it differs | the bound port                    |
+| `RUST_LOG`           | What to log                                | `info`                            |
+
+`.cargo/config.toml` sets `WARDED_DEV_ADDR` for the programs that Cargo starts, and not for one
+that is deployed. A variable that you set yourself takes precedence; set it empty to turn the
+address off. It has to be a loopback address, since nothing on it is encrypted.
 
 The generated certificate is for development. No client trusts it, and it is only used while the
 server listens on this computer alone. Browsers use HTTP/3 only with a certificate they trust.

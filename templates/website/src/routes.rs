@@ -1,16 +1,13 @@
 //! The routes, in the order in which they are tried, and the middleware around them.
 
-use crate::pages;
+use crate::{contact, pages};
 use axum::{Router, handler::HandlerWithoutStateExt};
-use tower::ServiceBuilder;
-use tower_http::{
-    catch_panic::CatchPanicLayer, compression::CompressionLayer, services::ServeDir,
-    trace::TraceLayer,
-};
-use warded_server::warded::{
-    self, DefinitionError, Matcher,
-    matchers::{exact_path, get, head, path},
-    negotiation::{LanguageMatching, Offers},
+use warded_server::{
+    DefaultMiddleware, StaticFiles,
+    warded::{
+        self, DefinitionError, Matcher,
+        matchers::{exact_path, get, head, path, post},
+    },
 };
 
 /// The directory that `/static/` serves, relative to where the server is started.
@@ -18,38 +15,29 @@ const STATIC_FILES: &str = "static";
 
 /// The routes, with the middleware that every request passes through.
 pub fn app() -> Result<Router, DefinitionError> {
-    let get_or_head = || get().or(head());
-    let languages = Offers::languages(["en", "sv"], LanguageMatching::Lookup)?;
+    // Browsers and monitors also ask for pages with HEAD, which `get()` alone does not include.
+    let page = |route| get().or(head()).and(exact_path(route));
 
-    // Routes are tried in order, and the first whose conditions all hold gets the request. Handlers
-    // become services with `into_service`, so that the middleware sees the whole response to HEAD.
+    // Routes are tried in order, and the first whose conditions all hold gets the request.
+    // Handlers become services with `into_service`, so that the middleware sees the whole response
+    // to HEAD.
     let routes = warded::Router::new()
+        .route(page("/"), pages::home.into_service())
+        .route(page("/about"), pages::about.into_service())
+        .route(page("/contact"), contact::form.into_service())
         .route(
-            get_or_head().and(path("/static/{*file}")?),
-            // An Axum router as a destination, here to take the prefix off the path.
-            Router::new().nest_service(
-                "/static",
-                ServeDir::new(STATIC_FILES).fallback(pages::not_found.into_service()),
-            ),
+            post().and(exact_path("/contact")),
+            contact::send.into_service(),
         )
-        // One page in two languages. Swedish is served when the visitor prefers it, and English
-        // otherwise.
+        .route(page("/contact/sent"), contact::sent.into_service())
         .route(
-            get_or_head()
-                .and(exact_path("/"))
-                .and(languages.selected("sv")?),
-            pages::home_in_swedish.into_service(),
-        )
-        .route(
-            get_or_head().and(exact_path("/")),
-            pages::home.into_service(),
+            get().or(head()).and(path("/static/{*file}")?),
+            StaticFiles::new("/static", STATIC_FILES).not_found(pages::not_found.into_service()),
         )
         .fallback(pages::not_found.into_service());
 
-    let middleware = ServiceBuilder::new()
-        .layer(TraceLayer::new_for_http())
-        .layer(CompressionLayer::new())
-        .layer(CatchPanicLayer::new());
+    // Logging, compression, and an error page when a handler panics.
+    let middleware = DefaultMiddleware::new().on_panic(pages::error);
     Ok(warded_server::app(routes).layer(middleware))
 }
 
