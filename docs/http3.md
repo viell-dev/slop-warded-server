@@ -61,9 +61,13 @@ from [mkcert](./certificates.md#for-development):
 ```sh
 key=$(openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform der |
     openssl dgst -sha256 -binary | base64)
-chromium --user-data-dir="$(mktemp -d)" --origin-to-force-quic-on=localhost:8443 \
-    --ignore-certificate-errors-spki-list="$key" https://localhost:8443/
+chromium --user-data-dir="$(mktemp -d)" --origin-to-force-quic-on=127.0.0.1:8443 \
+    --ignore-certificate-errors-spki-list="$key" https://127.0.0.1:8443/
 ```
+
+The command names `127.0.0.1`, where the server listens by default, and not `localhost`. Chromium
+may connect to `::1` for `localhost`, and does not try another address for an origin that it was
+told to reach over QUIC, so the page fails with `ERR_QUIC_HANDSHAKE_FAILED`.
 
 ## Route on it
 
