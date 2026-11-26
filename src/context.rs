@@ -98,11 +98,7 @@ where
 
 /// How to finish the response to a request: by its method, and whether HTTP/1 carries it.
 fn finisher(method: &Method, version: Version) -> Finish {
-    let http1 = matches!(
-        version,
-        Version::HTTP_09 | Version::HTTP_10 | Version::HTTP_11
-    );
-    match (method, http1) {
+    match (method, fields::is_http1(version)) {
         (&Method::HEAD, true) => finish_head::<true>,
         (&Method::HEAD, false) => finish_head::<false>,
         (&Method::CONNECT, true) => finish_connect::<true>,

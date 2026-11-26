@@ -479,6 +479,8 @@ mod tests {
             ("/", vec![("host", "attacker.example")]),
             ("/", vec![("host", "")]),
             ("http://attacker.example/", vec![]),
+            // `fields::check_request` makes the field name the target's host first, so this one
+            // stays as defence in depth.
             ("http://localhost/", vec![("host", "attacker.example")]),
             ("http://attacker.example/", vec![("host", "localhost")]),
         ] {

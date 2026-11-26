@@ -84,7 +84,7 @@ Warded routes. `warded_server::app` turns Warded routes into an `axum::Router`, 
 - **The same request on each.** Handlers see the real version, the client's address and Warded's
   `TransportSecurity`. Split cookies are joined, and requests that the HTTP specifications call
   malformed are refused before routing. Every response has `Date` and, where it is known, the true
-  `Content-Length`.
+  `Content-Length`, unless the application chose `Transfer-Encoding` over HTTP/1.1.
 - **Streaming both ways**, with trailers, and errors that a client cannot mistake for the end.
 - **Redirects from HTTP**, or the application itself on the cleartext listener.
 - **A development address** over plain HTTP on loopback, whose pages reload when the server
