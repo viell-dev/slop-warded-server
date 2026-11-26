@@ -11,13 +11,13 @@ JavaScript and calls the API.
 
 ## Choose what to run
 
-| You have | Use | Why |
-| --- | --- | --- |
-| A built site with no API | A static host or CDN | It can handle certificates and caching and serve files close to visitors. |
-| A built site and an API in another language | That API's server, or Caddy or nginx | The build consists of ordinary files. Your API can keep its current runtime. |
-| A built site and a Rust API | Warded Server for local or private trials | Run the build and API on one origin and deploy them together. |
-| Nuxt, SvelteKit or Next.js with [server-side rendering][vite-ssr] | A supported JavaScript runtime such as Node.js, behind a proxy | The framework needs to run JavaScript to render pages for requests. |
-| Interactive pages rendered by Rust | [Leptos](https://book.leptos.dev/) | Rust renders pages on the server and WebAssembly can make them interactive in the browser. |
+| You have                                                          | Use                                                            | Why                                                                                        |
+| ----------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| A built site with no API                                          | A static host or CDN                                           | It can handle certificates and caching and serve files close to visitors.                  |
+| A built site and an API in another language                       | That API's server, or Caddy or nginx                           | The build consists of ordinary files. Your API can keep its current runtime.               |
+| A built site and a Rust API                                       | Warded Server for local or private trials                      | Run the build and API on one origin and deploy them together.                              |
+| Nuxt, SvelteKit or Next.js with [server-side rendering][vite-ssr] | A supported JavaScript runtime such as Node.js, behind a proxy | The framework needs to run JavaScript to render pages for requests.                        |
+| Interactive pages rendered by Rust                                | [Leptos](https://book.leptos.dev/)                             | Rust renders pages on the server and WebAssembly can make them interactive in the browser. |
 
 ## What you get with a Rust API
 

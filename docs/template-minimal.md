@@ -24,11 +24,11 @@ The project's `.cargo/config.toml` sets `WARDED_DEV_ADDR` for this
 
 ## What is where
 
-| To change | Open |
-| --- | --- |
-| The response at `/` | `src/main.rs`, in `home` |
+| To change                             | Open                                        |
+| ------------------------------------- | ------------------------------------------- |
+| The response at `/`                   | `src/main.rs`, in `home`                    |
 | The paths and methods the app answers | `src/main.rs`, where `main` builds `routes` |
-| The local address | `.cargo/config.toml` |
+| The local address                     | `.cargo/config.toml`                        |
 
 <<< ../templates/minimal/src/main.rs
 
@@ -122,7 +122,8 @@ Use `cargo check` to check the project while editing. Use `cargo run` and open t
 above to check what they return. There are no starter tests. When you add tests, run
 `cargo test` and see [Testing](./testing.md) for how to call the application in a test.
 
-Run `cargo build --release` to build the standalone program. Read [limits](./limits.md) before deploying. Keep this alpha off the open internet.
+Run `cargo build --release` to build the standalone program. Read [limits](./limits.md) before
+deploying, and keep this alpha off the open internet.
 [Deployment](./deployment.md) covers starting the binary and setting its addresses.
 [Certificates](./certificates.md) explains how to get and configure a trusted certificate.
 
@@ -131,4 +132,4 @@ Run `cargo build --release` to build the standalone program. Read [limits](./lim
 - How do I combine route conditions? [Routes and requests](./requests.md)
 - How do I return HTML or JSON from a handler? [Axum](https://docs.rs/axum/0.8.9/axum/)
 - What else can a Warded route match? [Warded's guides](https://viell-dev.github.io/slop-warded-router/)
-- Where can I look up Rust structs and functions? [The Rust book](https://doc.rust-lang.org/book/)
+- How do I learn the Rust in these examples? [The Rust book](https://doc.rust-lang.org/book/)

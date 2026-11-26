@@ -37,16 +37,16 @@ Leave the page open. It reloads when the server starts again. You can also resta
 
 ## What is where
 
-| To change | Open |
-| --- | --- |
-| Text on the home page | `templates/home.html` |
-| The shared menu and page frame | `templates/base.html` |
-| The values a page shows | `src/pages.rs` |
-| The contact form and what it accepts | `templates/contact.html` and `src/contact.rs` |
-| Which paths answer and how they're tested | `src/routes.rs` and `src/routes/tests.rs` |
-| Styles, icons and images | `static/` |
-| How the server starts | `src/main.rs` |
-| The watched directories or local address | `bacon.toml` or `.cargo/config.toml` |
+| To change                                 | Open                                          |
+| ----------------------------------------- | --------------------------------------------- |
+| Text on the home page                     | `templates/home.html`                         |
+| The shared menu and page frame            | `templates/base.html`                         |
+| The values a page shows                   | `src/pages.rs`                                |
+| The contact form and what it accepts      | `templates/contact.html` and `src/contact.rs` |
+| Which paths answer and how they're tested | `src/routes.rs` and `src/routes/tests.rs`     |
+| Styles, icons and images                  | `static/`                                     |
+| How the server starts                     | `src/main.rs`                                 |
+| The watched directories or local address  | `bacon.toml` or `.cargo/config.toml`          |
 
 ## First change
 
@@ -106,7 +106,8 @@ Run `cargo test` to check the template's pages, form and static files.
 [Testing](./testing.md) shows how to add checks for your changes.
 
 Run `cargo build --release` and copy the built program and `static/` for deployment.
-Start the program from the directory that contains `static/`. Read [limits](./limits.md) before deploying. Keep this alpha off the open internet.
+Start the program from the directory that contains `static/`. Read [limits](./limits.md) before
+deploying, and keep this alpha off the open internet.
 [Deployment](./deployment.md) covers starting the binary and setting its addresses.
 [Certificates](./certificates.md) explains how to get and configure a trusted certificate.
 

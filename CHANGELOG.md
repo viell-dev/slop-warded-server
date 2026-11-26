@@ -7,8 +7,8 @@ Versions follow [Semantic Versioning](https://semver.org). Any prerelease may br
 New projects open in a browser at once, and their code holds no wiring
 ([#18](https://github.com/viell-dev/slop-warded-server/issues/18)).
 
-- Added a beginner guide for each template, a glossary, and a comparison of hosting choices
-  for a Vite build.
+- **Guides for each template**, from the first start to the first changes, a glossary, and a
+  comparison of where to host a Vite build.
 - **A development address:** `Server::development` or `WARDED_DEV_ADDR` also serves the application
   over plain HTTP on a loopback address, for a browser on this computer without a certificate.
   Other addresses are refused, because nothing on it is encrypted. Browsers use HTTP/1.1 there, and
