@@ -4,6 +4,75 @@ description: "Test an application without a network, and over real connections o
 
 # Testing
 
+## Your first test
+
+In a project from `api` or `website`, open `src/routes/tests.rs`. Copy a test that sends a
+similar request, give it a new function name, and change the method, path and expected response
+to match your route. Run `cargo test` from the project directory.
+
+In a project from `minimal`, add the libraries you need for tests:
+
+```sh
+cargo add --dev tower --features util
+cargo add --dev http-body-util
+```
+
+In `src/main.rs`, move the route declarations and `warded_server::app(routes)` into
+`fn app()`. Call `app()` from both `main` and the test. This listing shows the starter route
+and the first test. Keep any routes you already added, and use your own greeting in the check.
+
+```rust,no_run
+use axum::routing::any;
+use warded_server::{
+    Server,
+    warded::{
+        Matcher, Router,
+        matchers::{exact_path, get},
+    },
+};
+
+async fn home() -> &'static str {
+    "Hello\n"
+}
+
+fn app() -> axum::Router {
+    let routes = Router::new().route(get().and(exact_path("/")), any(home));
+    warded_server::app(routes)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    warded_server::init_logging();
+    Server::from_env()?.serve(app()).await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::app;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn home_says_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let request = Request::get("/").body(Body::empty())?;
+        let response = app().oneshot(request).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.into_body().collect().await?.to_bytes(), "Hello\n");
+        Ok(())
+    }
+}
+```
+
+Run `cargo test`. You should see `home_says_hello ... ok`.
+
+If a route uses `path(...)?`, give `app` a `Result` return type as in
+[Declaring routes](./requests.md#declaring-routes), and call it as `app()?` in both places.
+
 ## Without a network
 
 An application is a Tower service, so a test can call it with a request and check the response. This
@@ -56,6 +125,11 @@ response to HEAD can be there, and `Alt-Svc` and `Date` are not.
 Bind to port 0, which picks a free one, and stop the server when the test ends. With
 [reqwest](https://docs.rs/reqwest), which uses HTTP/2 here:
 
+```sh
+cargo add --dev reqwest --features http2
+cargo add tokio --features sync
+```
+
 ```rust
 use axum::{Router, http::Version, routing::get};
 use tokio::sync::oneshot;
@@ -89,6 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 ## By hand
+
+Use a [curl build that supports HTTP/3](./getting-started.md#shell-and-curl).
 
 ```sh
 curl --insecure --include --http3-only https://localhost:8443/

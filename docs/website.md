@@ -34,7 +34,8 @@ or rename the file by hand. Then add a long `Cache-Control` to that route only, 
 that exist:
 
 ```sh
-cargo add tower-http --features set-header
+cargo add tower-http --features fs,set-header
+cargo add --dev tempfile
 ```
 
 ```rust

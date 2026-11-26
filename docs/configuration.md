@@ -110,7 +110,8 @@ In a project from a template, `.cargo/config.toml` sets the variable for the pro
 starts: `cargo run`, `cargo test` and watchers that run them. A program that is built and started
 on its own, as in a [deployment](./deployment.md), does not get it. `cargo run --release` does, so
 do not deploy with Cargo. A variable that is set already takes precedence, so
-`WARDED_DEV_ADDR= cargo run` turns the address off.
+`WARDED_DEV_ADDR= cargo run` turns the address off. See [Shell and
+curl](./getting-started.md#shell-and-curl) for the PowerShell equivalent.
 
 The templates' READMEs show how [bacon](https://dystroy.org/bacon/) restarts the server after each
 change: `cargo install --locked bacon` once, then `bacon run-long` in place of `cargo run`.
@@ -161,7 +162,8 @@ Make whatever manages the process wait longer than the grace period before it ki
 
 The server reports through [`tracing`](https://docs.rs/tracing), and a subscriber such as
 `tracing-subscriber` decides what happens with it. `warded_server::init_logging()`, which the
-templates call first in `main`, prints to the terminal at the `info` level, or as `RUST_LOG` says:
+templates call first in `main`, prints to the terminal at the `info` level, or as `RUST_LOG` says.
+For PowerShell, see [Shell and curl](./getting-started.md#shell-and-curl).
 
 ```sh
 RUST_LOG=info,warded_server=debug cargo run

@@ -20,6 +20,28 @@ a working project to start from.
 cargo install cargo-generate --locked
 ```
 
+### Shell and curl
+
+The commands use Bash, or Git Bash on Windows. For the curl commands, PowerShell 7.3 or later
+also works with its default argument handling. There, `curl` runs `curl.exe`. Use Git Bash if
+you normally use Windows PowerShell 5.1 or Command Prompt. In 5.1, `curl` is an alias for
+`Invoke-WebRequest`. Command Prompt handles the examples' JSON quotes differently.
+The [curl that comes with Windows](https://curl.se/windows/microsoft.html) supports
+neither `--http2` nor `--http3-only`. Check `curl --version` for `HTTP2` or `HTTP3` in Features.
+
+In PowerShell, set an environment variable before running Cargo. For example, for
+`RUST_LOG=debug cargo run`, use:
+
+```powershell
+$env:RUST_LOG = "debug"
+cargo run
+```
+
+The value lasts for the shell session. Use `Remove-Item Env:RUST_LOG` to remove it. To override
+the address in `.cargo/config.toml` and turn it off, set `$env:WARDED_DEV_ADDR = ""` in
+PowerShell 7.5 or later, then run `cargo run`. Removing the variable lets Cargo use its
+configured value again. In earlier versions, run `WARDED_DEV_ADDR= cargo run` in Git Bash.
+
 ## Create a project
 
 ```sh
@@ -47,7 +69,7 @@ cd my-app
 cargo run
 ```
 
-The first build takes a minute or so. Then the log says where to go:
+The first build can take a few minutes. Then the log says where to go:
 
 ```text
 INFO warded_server::server: open http://127.0.0.1:3000/ in a browser
@@ -66,7 +88,7 @@ curl --insecure --http2 https://localhost:8443/
 curl --insecure --http3-only https://localhost:8443/
 ```
 
-The last one needs a curl with HTTP/3, which `curl --version` lists among its features.
+The last two need a curl with the corresponding protocol enabled. See [Shell and curl](#shell-and-curl).
 [Certificates](./certificates.md) explains how to get one that browsers trust, also for development.
 
 ## The code
@@ -106,11 +128,19 @@ If you have an Axum application, see [existing Axum applications](./existing-axu
 
 ### About the examples
 
-The examples on this site are complete programs that check themselves, so that they stay correct. In
-your project, put `app` in a module, its checks in tests, and `serve` in `main`. An example that
-needs more than its template has starts with the `cargo add` commands for it. The checks use
-`tower`, with its `util` feature, and `http-body-util`, which the `api` and `website` templates have
-for tests.
+The examples on this site are complete programs. For one with checks in `main`, save it in
+`examples/`, for example as `examples/routes.rs`, and run `cargo run --example routes`.
+Example programs can use development dependencies. To use the code in your application, put
+`app` in a module, its checks in tests, and `serve` in `main`.
+
+For examples that use `tower::ServiceExt` or `http_body_util::BodyExt`, add these development
+dependencies if you started from `minimal` or your own project. The `api` and `website` templates
+already have them. The examples list any additional dependencies where they use them.
+
+```sh
+cargo add --dev tower --features util
+cargo add --dev http-body-util
+```
 
 ### Features
 

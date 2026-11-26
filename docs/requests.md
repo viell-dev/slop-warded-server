@@ -10,6 +10,14 @@ every condition in full.
 
 ## Declaring routes
 
+If the project does not have Serde yet, add it for the `Deserialize` derive:
+
+```sh
+cargo add serde --features derive
+```
+
+The checks also use the [shared example dependencies](./getting-started.md#about-the-examples).
+
 ```rust
 use axum::{
     body::Body,
@@ -84,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 - **Order matters.** The first route whose conditions all hold is selected, and its response is
-  final.
+  final. Put a fixed path above any pattern that would also match it.
 - **`get()` does not include HEAD.** Write `get().or(head())` where clients should be able to ask
   for the head alone; Axum then leaves out the body.
 - **Paths are exact.** `/orders` and `/orders/` are different, and `path` fails when the pattern is

@@ -9,8 +9,8 @@ The names used below are in the [glossary](./glossary.md).
 
 ## Start
 
-See [what you need](./getting-started.md#what-you-need) for Rust, a C compiler and
-`cargo-generate`. Install `cargo-generate` once if you need it.
+See [what you need](./getting-started.md#what-you-need) for Rust, a C compiler,
+`cargo-generate` and the shell to run the commands in.
 
 ```sh
 cargo generate viell-dev/slop-warded-server templates/website --tag 0.1.0-alpha.2 --name my-site
@@ -31,8 +31,7 @@ bacon run-long
 ```
 
 The project's `bacon.toml` watches `templates/` and `static/` as well as Rust files.
-Leave the page open. It reloads when the server starts again. You can also restart
-`cargo run` by hand after each edit. If the browser stays on the old page, see
+Leave the page open. It reloads when the server starts again. If it stays on the old page, see
 [Troubleshooting](./troubleshooting.md#the-page-does-not-reload).
 
 ## What is where
@@ -51,7 +50,8 @@ Leave the page open. It reloads when the server starts again. You can also resta
 ## First change
 
 In `templates/home.html`, replace the text in the first `<p>` with
-`This is my first site.`. Save the file and see the new text on the home page.
+`This is my first site.` and save. HTML templates are compiled into the program, so stop and
+restart plain `cargo run` to see the change. `bacon run-long` does that by itself.
 
 <<< ../templates/website/templates/home.html
 
@@ -64,7 +64,7 @@ fills in the HTML template from the fields of a Rust struct.
    `Our first news item.` and keep the line that extends `base.html` and the content block.
 2. In `src/pages.rs`, copy the `About` struct (including its two attributes) and the
    `about` function below it. In the copies, rename the type to `News` in both places,
-   change the template path to `news.html`, rename the function to `news`, and set
+   change the HTML template path to `news.html`, rename the function to `news`, and set
    `title` to `"News"` and `current` to `"/news"`.
 3. In `src/routes.rs`, add `.route(page("/news"), pages::news.into_service())` after the
    route for `/about`. The `page` helper accepts GET (read the page) and HEAD (get its headers).
@@ -106,10 +106,13 @@ Run `cargo test` to check the template's pages, form and static files.
 [Testing](./testing.md) shows how to add checks for your changes.
 
 Run `cargo build --release` and copy the built program and `static/` for deployment.
-Start the program from the directory that contains `static/`. Read [limits](./limits.md) before
-deploying, and keep this alpha off the open internet.
+Start the program from the directory that contains `static/`. Run this alpha on your own computer
+or a private network whose users you trust. Keep it off public sites and read the
+[limits](./limits.md) before deploying.
 [Deployment](./deployment.md) covers starting the binary and setting its addresses.
 [Certificates](./certificates.md) explains how to get and configure a trusted certificate.
+For a Linux server, build on Linux or use the [Dockerfile](./deployment.md#containers).
+A Windows executable does not run on Linux.
 
 ## Learn more
 

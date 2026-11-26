@@ -4,7 +4,8 @@ description: "Fix start-up errors, certificate warnings, missing HTTP/3, unexpec
 
 # Troubleshooting
 
-Start with more logging, which names the reason for most of what follows:
+Start with more logging, which names the reason for most of what follows. For PowerShell, see
+[Shell and curl](./getting-started.md#shell-and-curl).
 
 ```sh
 RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
@@ -16,6 +17,7 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `failed to run custom build command for aws-lc-sys`                   | There is no C compiler; see [what you need](./getting-started.md#what-you-need)          |
 | `package … requires rustc 1.99.1`                                     | Run `rustup update`                                                                      |
+| `Access is denied. (os error 5)` when rebuilding on Windows             | Stop the running server first so Cargo can replace its executable |
 | `the http3 feature needs panic = "unwind"`                            | Remove `panic = "abort"` from `Cargo.toml`, or turn off [HTTP/3](./http3.md#turn-it-off) |
 | `expected Infallible` (or `!`), `found DispatchError<…>`              | Pass Warded routes through `warded_server::app` before `serve`                           |
 | `AddExtension<Router, ConnectInfo<…>>: IntoResponse` is not satisfied | Pass the router itself; the client's address is there without it                         |
@@ -69,8 +71,9 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 
 Check in this order:
 
-1. `curl --http3-only` reaches the server from the same network. If not, UDP is blocked, or the log
-   has the reason.
+1. From the same network, try `curl --http3-only` with a
+   [curl build that supports HTTP/3](./getting-started.md#shell-and-curl). If it cannot reach the
+   server, UDP is blocked, or the log has the reason.
 2. `curl --head` shows an `alt-svc` field with the port that clients use. If the port is wrong, set
    `WARDED_PUBLIC_PORT`.
 3. The certificate comes from a public authority; see [in browsers](./http3.md#in-browsers).
@@ -109,6 +112,7 @@ covers routes in detail.
 | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `invalid path: missing field …`                                                         | The fields of the type in `Params` are not the names in the pattern               |
 | `invalid path: invalid type: map, …`                                                    | `Params` takes a struct, also for one capture                                     |
+| `invalid path: id: invalid digit found in string` | The path capture is not a number. If you meant to reach a fixed path such as `/notes/count`, put its route above the pattern. See [Declaring routes](./requests.md#declaring-routes). |
 | `Invalid URL: missing field …`, or a 500 with `Wrong number of path arguments for Path` | The handler uses Axum's `Path` in a Warded route; use `Params`                    |
 | `Params needs a handler that a Warded route selected`                                   | The handler is in an Axum router; use `Path` there                                |
 | `Missing request extension`                                                             | A test without the server has to insert what it adds; see [testing](./testing.md) |
