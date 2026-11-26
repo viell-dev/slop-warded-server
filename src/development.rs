@@ -14,7 +14,7 @@ use axum::{
 use http_body::Frame;
 use std::{
     future::Future,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -113,7 +113,9 @@ enum Refusal {
 ///   curl, are not affected.
 /// - **Not changes from other origins.** For browsers without Fetch Metadata, a request with another
 ///   method than GET, HEAD, OPTIONS or TRACE, or that asks to upgrade the connection, as WebSockets
-///   do, is refused when its `Origin` is not such an address.
+///   do, is refused when its `Origin` is not on this computer: a loopback address, `localhost`, or
+///   a name below `.localhost`. Any IP address will not do here, since a page can come from a
+///   server's.
 fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
     let mut hosts = headers.get_all(HOST).iter();
     let host = hosts
@@ -127,7 +129,7 @@ fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
         return Some(Refusal::Host("none".to_owned()));
     }
     for authority in host.as_deref().into_iter().chain(target) {
-        if !is_this_computer(authority) {
+        if fixed_host(authority).is_none() {
             return Some(Refusal::Host(authority.to_owned()));
         }
     }
@@ -171,14 +173,20 @@ fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
     None
 }
 
-/// Whether an authority, such as `localhost:3000`, names this computer in a way that no other site's
-/// DNS can change: an IP address, `localhost`, or a name below `.localhost`, with any port.
-fn is_this_computer(authority: &str) -> bool {
-    let Ok(authority) = authority.parse::<Authority>() else {
-        return false;
-    };
+/// A host that no other site's DNS can change.
+#[derive(Debug, PartialEq)]
+enum FixedHost {
+    Address(IpAddr),
+    /// `localhost`, or a name below `.localhost`, which browsers answer themselves.
+    Localhost,
+}
+
+/// The host of an authority, such as `localhost:3000`, if no other site's DNS can change it: an IP
+/// address, `localhost`, or a name below `.localhost`, with any port.
+fn fixed_host(authority: &str) -> Option<FixedHost> {
+    let authority = authority.parse::<Authority>().ok()?;
     if authority.as_str().contains('@') {
-        return false;
+        return None;
     }
     let host = authority.host();
     let host = host.strip_suffix('.').unwrap_or(host);
@@ -186,13 +194,26 @@ fn is_this_computer(authority: &str) -> bool {
         .strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
     {
-        return address.parse::<Ipv6Addr>().is_ok();
+        return address
+            .parse::<Ipv6Addr>()
+            .ok()
+            .map(|address| FixedHost::Address(address.into()));
     }
-    if host.parse::<Ipv4Addr>().is_ok() {
-        return true;
+    if let Ok(address) = host.parse::<Ipv4Addr>() {
+        return Some(FixedHost::Address(address.into()));
     }
     let host = host.to_ascii_lowercase();
-    host == "localhost" || host.ends_with(".localhost")
+    (host == "localhost" || host.ends_with(".localhost")).then_some(FixedHost::Localhost)
+}
+
+/// Whether an authority names this computer: a loopback address, also as an IPv4-mapped one,
+/// `localhost`, or a name below `.localhost`.
+fn is_this_computer(authority: &str) -> bool {
+    match fixed_host(authority) {
+        Some(FixedHost::Address(address)) => address.to_canonical().is_loopback(),
+        Some(FixedHost::Localhost) => true,
+        None => false,
+    }
 }
 
 async fn refuse_other_sites(
@@ -300,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn only_names_that_no_other_site_controls_are_this_computer() {
+    fn only_names_that_no_other_site_controls_are_fixed() {
         for authority in [
             "127.0.0.1",
             "127.0.0.1:3000",
@@ -313,7 +334,7 @@ mod tests {
             "app.localhost:3000",
             "App.LocalHost.",
         ] {
-            assert!(is_this_computer(authority), "{authority}");
+            assert!(fixed_host(authority).is_some(), "{authority}");
         }
         for authority in [
             "",
@@ -326,6 +347,31 @@ mod tests {
             "[::1",
             "[fe80::1%25eth0]",
             "127.1",
+        ] {
+            assert_eq!(fixed_host(authority), None, "{authority}");
+        }
+    }
+
+    #[test]
+    fn only_loopback_addresses_and_localhost_are_this_computer() {
+        for authority in [
+            "127.0.0.1:5173",
+            "127.0.0.2",
+            "[::1]:5173",
+            "[::ffff:127.0.0.1]:5173",
+            "localhost:5173",
+            "app.localhost",
+        ] {
+            assert!(is_this_computer(authority), "{authority}");
+        }
+        for authority in [
+            "192.0.2.42",
+            "192.0.2.42:3000",
+            "0.0.0.0:3000",
+            "[2001:db8::1]",
+            "[::ffff:192.0.2.42]",
+            "[::]",
+            "attacker.example",
         ] {
             assert!(!is_this_computer(authority), "{authority}");
         }
@@ -397,6 +443,20 @@ mod tests {
             ),
             (Method::DELETE, vec![host, ("origin", "null")]),
             (Method::PUT, vec![host, ("origin", "file:///home")]),
+            // A page can come from any server's IP address.
+            (Method::POST, vec![host, ("origin", "http://192.0.2.42")]),
+            (
+                Method::POST,
+                vec![host, ("origin", "http://[2001:db8::1]:8080")],
+            ),
+            (
+                Method::GET,
+                vec![
+                    host,
+                    ("upgrade", "websocket"),
+                    ("origin", "http://192.0.2.42"),
+                ],
+            ),
             (
                 Method::GET,
                 vec![

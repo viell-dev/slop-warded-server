@@ -16,7 +16,7 @@ New projects open in a browser at once, and their code holds no wiring
 - **The development address answers only this computer's browser:** a 403 for requests for another
   host than an IP address, `localhost` or a name below `.localhost` (against DNS rebinding), for
   those that the browser marks as made by another site, except to open a page, and for changes
-  and WebSockets from another origin.
+  and WebSockets from an origin that is not on this computer.
 - The log says what to open, such as `open http://127.0.0.1:3000/ in a browser`. The `serving` line
   has a `development` field.
 - **Helpers**, over `tracing-subscriber`, `tower-http` and Axum, behind new default features:

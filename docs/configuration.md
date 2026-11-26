@@ -88,7 +88,9 @@ IPv6 first. Things to know about it:
     opens a page with GET or HEAD. Links to the address from elsewhere work; scripts, forms that
     send POST, and `<object>` or `<embed>` on other sites do not.
   - **changes from another origin**, for browsers that do not send `Sec-Fetch-Site`: methods other
-    than GET, HEAD, OPTIONS and TRACE, and WebSockets, whose `Origin` names another host.
+    than GET, HEAD, OPTIONS and TRACE, and WebSockets, whose `Origin` is not on this computer. A
+    page from `http://localhost:5173` or `http://127.0.0.1:5173` may send them; one from another
+    computer's IP address may not.
 
   curl and other clients that send none of these fields are not affected. Each refusal is logged
   as a warning.

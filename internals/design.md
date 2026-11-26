@@ -78,8 +78,10 @@ development setting becomes a deployed one.
   requests for other hosts than IP addresses, `localhost` and names below `.localhost`, as Vite's
   `server.allowedHosts` does; rebinding needs a name that the attacker's DNS answers. It also
   follows Fetch Metadata's resource isolation policy, and, for browsers without it, refuses changes
-  and WebSockets whose `Origin` is another host. Names from the hosts file are refused with the
-  rest: a setting for them waits until someone needs one.
+  and WebSockets whose `Origin` is not on this computer: a loopback address, `localhost` or a name
+  below it. Any IP address does for the host, which the browser connected to, but not for the
+  origin, since pages come from servers' addresses too. Names from the hosts file are refused with
+  the rest: a setting for them waits until someone needs one.
 
 ### Live reload
 
