@@ -24,13 +24,13 @@ The project's `.cargo/config.toml` sets `WARDED_DEV_ADDR` for this
 
 ## What is where
 
-| To change | Open |
-| --- | --- |
-| The endpoints or their list at `/` | `src/routes.rs` |
-| What a note contains or how it is stored | `src/notes.rs` |
-| JSON errors and how invalid input is reported | `src/problem.rs` |
-| The checks for requests and responses | `src/routes/tests.rs` |
-| The server startup or local address | `src/main.rs` or `.cargo/config.toml` |
+| To change                                     | Open                                  |
+| --------------------------------------------- | ------------------------------------- |
+| The endpoints or their list at `/`            | `src/routes.rs`                       |
+| What a note contains or how it is stored      | `src/notes.rs`                        |
+| JSON errors and how invalid input is reported | `src/problem.rs`                      |
+| The checks for requests and responses         | `src/routes/tests.rs`                 |
+| The server startup or local address           | `src/main.rs` or `.cargo/config.toml` |
 
 ## First change
 
@@ -46,9 +46,8 @@ Stop the server with Ctrl+C, run `cargo run` again, and refresh `/` to see the n
 
 Add a `GET /health` endpoint. In `src/routes.rs`, paste `Health` and `health` from the
 example below above `#[cfg(test)]`. Add the `.route(...)` call to the existing chain before
-`.fallback(...)`. Change `Index`'s `endpoints` field from `[&'static str; 4]` to
-`[&'static str; 5]` and append
-`"GET /health"` to the array so it shows up at `/`.
+`.fallback(...)`. Add `"GET /health",` to the `endpoints` list in `index`, so that it shows
+up at `/`.
 
 This complete example shows the new handler and checks what it returns. The template already
 has the imports needed for the code you copy.
@@ -112,7 +111,8 @@ Run `cargo test` to check creating, reading and deleting notes, the endpoint lis
 responses. [Testing](./testing.md) shows how to add a test for the new endpoint.
 
 Run `cargo build --release` to build the program. Replace the example in-memory store before
-you need notes to survive a restart. Read [limits](./limits.md) before deploying. Keep this alpha off the open internet.
+you need notes to survive a restart. Read [limits](./limits.md) before deploying, and keep this
+alpha off the open internet.
 [Deployment](./deployment.md) covers starting the binary and setting its addresses.
 [Certificates](./certificates.md) explains how to get and configure a trusted certificate.
 
