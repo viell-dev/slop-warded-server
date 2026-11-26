@@ -883,3 +883,116 @@ async fn an_http2_host_field_names_the_host_of_the_authority() {
         assert_eq!(actual, expected, "{fields:?}");
     }
 }
+
+/// Give a response the framing fields that a test case names.
+fn frame_as(headers: &mut HeaderMap, case: &str) {
+    let fields: &[(_, &'static str)] = match case {
+        "wrong" => &[(header::CONTENT_LENGTH, "6")],
+        "short" => &[(header::CONTENT_LENGTH, "100")],
+        "two" => &[(header::CONTENT_LENGTH, "5"), (header::CONTENT_LENGTH, "6")],
+        "same" => &[(header::CONTENT_LENGTH, "5"), (header::CONTENT_LENGTH, "5")],
+        "invalid" => &[(header::CONTENT_LENGTH, "five")],
+        "chunked" => &[(header::TRANSFER_ENCODING, "chunked")],
+        "both" => &[
+            (header::TRANSFER_ENCODING, "chunked"),
+            (header::CONTENT_LENGTH, "5"),
+        ],
+        _ => &[],
+    };
+    for (name, value) in fields {
+        headers.append(name, HeaderValue::from_static(value));
+    }
+}
+
+#[tokio::test]
+async fn the_length_of_the_content_is_its_only_framing() {
+    use std::convert::Infallible;
+
+    let authority = Authority::new();
+    // Axum gives the responses of handlers a length, but not those of other services.
+    let service = tower::service_fn(|request: Request| async move {
+        let (case, body) = match request.uri().path().split('/').collect::<Vec<_>>()[..] {
+            ["", "service", case] => (case.to_owned(), Body::from("hello")),
+            ["", "stream", case] => {
+                let (mut sender, body) = channel();
+                tokio::spawn(async move { sender.send_data("hello".into()).await });
+                (case.to_owned(), body)
+            }
+            _ => unreachable!(),
+        };
+        let mut response = Response::new(body);
+        frame_as(response.headers_mut(), &case);
+        Ok::<_, Infallible>(response)
+    });
+    let handler = |axum::extract::Path(case): axum::extract::Path<String>| async move {
+        let mut response = "hello".into_response();
+        frame_as(response.headers_mut(), &case);
+        response
+    };
+    let app = axum::Router::new()
+        .route("/handler/{case}", any(handler))
+        .fallback_service(service);
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, app);
+    let cases = [
+        "none", "wrong", "short", "two", "same", "invalid", "chunked", "both",
+    ];
+    let mut paths: Vec<_> = cases
+        .iter()
+        .map(|case| format!("/service/{case}"))
+        .collect();
+    paths.extend(cases.iter().map(|case| format!("/handler/{case}")));
+    // Content of unknown length keeps a valid length, which the protocols check it against.
+    paths.extend(
+        ["two", "same", "invalid", "chunked", "both"].map(|case| format!("/stream/{case}")),
+    );
+    for path in &paths {
+        for method in ["GET", "HEAD"] {
+            let length = match (path.as_str(), method) {
+                ("/stream/two" | "/stream/invalid" | "/stream/chunked", _) => None,
+                // Axum has taken the content off, and the server cannot tell the true length.
+                ("/handler/wrong", "HEAD") => Some("6"),
+                ("/handler/short", "HEAD") => Some("100"),
+                ("/handler/two" | "/handler/invalid", "HEAD") => None,
+                _ => Some("5"),
+            };
+            let content = if method == "GET" { "hello" } else { "" };
+            for version in VERSIONS {
+                let mut client = Client::connect(version, running.https, &authority)
+                    .await
+                    .unwrap();
+                let case = format!("{version:?} {method} {path}");
+                let response = client.send(request(method, path, Body::empty())).await;
+                let response = response.unwrap_or_else(|error| panic!("{case}: {error}"));
+                assert_eq!(response.status(), StatusCode::OK, "{case}");
+                let headers = response.headers().clone();
+                let lengths: Vec<_> = headers.get_all(header::CONTENT_LENGTH).iter().collect();
+                assert_eq!(lengths, Vec::from_iter(length), "{case}");
+                assert!(
+                    !headers.contains_key(header::TRANSFER_ENCODING) || length.is_none(),
+                    "{case}"
+                );
+                assert_eq!(text(response).await.unwrap(), content, "{case}");
+            }
+            // What goes over the wire, which a client could otherwise tidy up.
+            let request =
+                format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            let response = common::cleartext(running.http.unwrap(), &request).await;
+            let (head, body) = response.split_once("\r\n\r\n").unwrap();
+            let head = head.to_ascii_lowercase();
+            let fields = |name: &str| head.lines().filter(|line| line.starts_with(name)).count();
+            let expected = (usize::from(length.is_some()), usize::from(length.is_none()));
+            let framing = (fields("content-length:"), fields("transfer-encoding:"));
+            if method == "GET" {
+                assert_eq!(framing, expected, "{request:?}: {response}");
+                assert!(
+                    body == content || length.is_none(),
+                    "{request:?}: {response}"
+                );
+            } else {
+                assert_eq!(framing.0, expected.0, "{request:?}: {response}");
+                assert_eq!(body, "", "{request:?}");
+            }
+        }
+    }
+}

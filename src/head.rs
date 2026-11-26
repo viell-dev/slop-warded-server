@@ -4,8 +4,8 @@
 //! well-formed head whichever protocol carried it.
 
 use http::{
-    HeaderValue, Version,
-    header::HOST,
+    HeaderMap, HeaderValue, Version,
+    header::{CONTENT_LENGTH, HOST},
     request::Parts,
     uri::{Authority, Scheme},
 };
@@ -148,6 +148,25 @@ fn port<'a>(authority: &'a Authority, default: Option<&'a str>) -> Option<&'a st
         "" => Some("0"),
         significant => Some(significant),
     }
+}
+
+/// The one length that the `Content-Length` fields of a head agree on.
+pub(crate) fn declared_length(headers: &HeaderMap) -> Result<Option<u64>, &'static str> {
+    let mut lengths = headers.get_all(CONTENT_LENGTH).iter();
+    let Some(length) = lengths.next() else {
+        return Ok(None);
+    };
+    if lengths.any(|other| other != length) {
+        return Err("the head has different Content-Length fields");
+    }
+    let digits = length.to_str().unwrap_or_default();
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("the head has an invalid Content-Length");
+    }
+    let length = digits.parse();
+    length
+        .map(Some)
+        .map_err(|_| "the head has an invalid Content-Length")
 }
 
 #[cfg(test)]

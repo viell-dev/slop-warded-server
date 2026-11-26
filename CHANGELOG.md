@@ -51,6 +51,15 @@ HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
   host. Over HTTP/2 and HTTP/3, a `Host` field has to name the host of `:authority`, and a target
   with user information, such as `user@example.com`, is refused on every protocol.
 
+Responses declare their true length
+([#28](https://github.com/viell-dev/slop-warded-server/issues/28)). A `Content-Length` that an
+application sets for content of known length, and that is not its length, made debug builds panic
+over HTTP/1.1, with no response, and release builds send the false length. The length of the
+content now replaces it, and the log warns. A `Transfer-Encoding` beside a length goes too, which
+closed HTTP/1.1 connections without a response. Repeated `Content-Length` fields become one, which
+HTTP/1.1 also sent no response to HEAD for, and invalid ones for content of unknown length go, with
+a warning.
+
 ## 0.1.0-alpha.2 - 2026-11-25
 
 HTTP/3 no longer lets a client fill the memory, and fewer responses are lost. The server is still not
