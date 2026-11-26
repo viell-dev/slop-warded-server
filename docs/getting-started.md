@@ -45,7 +45,7 @@ configured value again. In earlier versions, run `WARDED_DEV_ADDR= cargo run` in
 ## Create a project
 
 ```sh
-cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.2
+cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.3
 ```
 
 It asks for a template and a project name, and makes a directory with that name:
@@ -59,7 +59,7 @@ It asks for a template and a project name, and makes a directory with that name:
 To skip the questions, name both:
 
 ```sh
-cargo generate viell-dev/slop-warded-server templates/minimal --tag 0.1.0-alpha.2 --name my-app
+cargo generate viell-dev/slop-warded-server templates/minimal --tag 0.1.0-alpha.3 --name my-app
 ```
 
 ## Run it
@@ -105,7 +105,7 @@ The same parts work in a project of your own:
 [dependencies]
 axum = "0.8.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.2" }
+warded-server = { git = "https://github.com/viell-dev/slop-warded-server", tag = "0.1.0-alpha.3" }
 ```
 
 Use Warded through `warded_server::warded`, as the examples here do. A direct dependency on another

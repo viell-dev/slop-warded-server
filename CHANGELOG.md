@@ -2,7 +2,11 @@
 
 Versions follow [Semantic Versioning](https://semver.org). Any prerelease may break compatibility.
 
-## Unreleased
+## 0.1.0-alpha.3 - 2026-11-26
+
+New projects start in a browser and come with a guide for beginners, and requests that HTTP calls
+malformed no longer reach the application. This is still an alpha, not for the open internet; see
+the [known weaknesses](https://viell-dev.github.io/slop-warded-server/limits.html).
 
 New projects open in a browser at once, and their code holds no wiring
 ([#18](https://github.com/viell-dev/slop-warded-server/issues/18)).

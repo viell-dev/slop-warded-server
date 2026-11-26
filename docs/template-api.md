@@ -13,7 +13,7 @@ See [what you need](./getting-started.md#what-you-need) for Rust, a C compiler,
 `cargo-generate` and the shell to run the commands in.
 
 ```sh
-cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.2 --name my-api
+cargo generate viell-dev/slop-warded-server templates/api --tag 0.1.0-alpha.3 --name my-api
 cd my-api
 cargo run
 ```
