@@ -1,15 +1,29 @@
 <!doctype html>
-<html lang="{{ language }}">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ title }}</title>
+    <title>{% block title %}{{ title }}{% endblock %}</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
-    <main>
+    <a class="skip" href="#content">Skip to the content</a>
+    <header>
+      <nav aria-label="Main">
+        <ul>
+          <li><a href="/"{% if current == "/" %} aria-current="page"{% endif %}>Home</a></li>
+          <li><a href="/about"{% if current == "/about" %} aria-current="page"{% endif %}>About</a></li>
+          <li><a href="/contact"{% if current == "/contact" %} aria-current="page"{% endif %}>Contact</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main id="content">
       <h1>{{ title }}</h1>
       {% block content %}{% endblock %}
     </main>
+    <footer>
+      <p>Served by Warded Server.</p>
+    </footer>
   </body>
 </html>

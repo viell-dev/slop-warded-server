@@ -38,6 +38,14 @@ async fn notes_can_be_created_read_and_deleted() {
 }
 
 #[tokio::test]
+async fn the_start_lists_the_endpoints() {
+    let app = app(Notes::default()).unwrap();
+    let (status, body) = send(&app, "GET", "/", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["endpoints"][0], "GET /notes");
+}
+
+#[tokio::test]
 async fn bad_requests_are_refused() {
     let app = app(Notes::default()).unwrap();
     for (method, uri, body, expected) in [

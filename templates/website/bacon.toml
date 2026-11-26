@@ -1,0 +1,3 @@
+# `bacon run-long` builds and runs the server, and restarts it when a file changes. Besides the
+# Rust code, it watches the pages' templates and the static files. https://dystroy.org/bacon/config/
+watch = ["templates", "static"]

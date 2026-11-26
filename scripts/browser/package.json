@@ -1,0 +1,16 @@
+{
+  "name": "warded-server-browser-checks",
+  "private": true,
+  "description": "Uses the pages of a project made from the website template in Chrome",
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test website.test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.65.1"
+  }
+}

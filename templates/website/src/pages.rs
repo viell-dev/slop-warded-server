@@ -1,65 +1,80 @@
 //! The pages, from the Askama templates in `templates/`.
+//!
+//! Each page is a type with the values that its template shows. `base.html` is the frame around
+//! them, which needs a `title`, and the path of the menu entry to mark as `current`.
 
 use askama::Template;
 use axum::{
-    http::{
-        StatusCode,
-        header::{CONTENT_LANGUAGE, VARY},
-    },
+    http::StatusCode,
     response::{Html, IntoResponse, Response},
 };
+use std::any::Any;
 
 #[derive(Template)]
 #[template(path = "home.html")]
 struct Home {
-    language: &'static str,
     title: &'static str,
-    text: &'static str,
+    current: &'static str,
+}
+
+pub async fn home() -> Response {
+    let page = Home {
+        title: "Welcome",
+        current: "/",
+    };
+    render(StatusCode::OK, &page)
+}
+
+#[derive(Template)]
+#[template(path = "about.html")]
+struct About {
+    title: &'static str,
+    current: &'static str,
+}
+
+pub async fn about() -> Response {
+    let page = About {
+        title: "About",
+        current: "/about",
+    };
+    render(StatusCode::OK, &page)
 }
 
 #[derive(Template)]
 #[template(path = "not-found.html")]
 struct NotFound {
-    language: &'static str,
     title: &'static str,
-}
-
-pub async fn home() -> Response {
-    let page = Home {
-        language: "en",
-        title: "Welcome",
-        text: "This page is served over HTTP/1.1, HTTP/2 and HTTP/3.",
-    };
-    render(StatusCode::OK, page.language, &page)
-}
-
-pub async fn home_in_swedish() -> Response {
-    let page = Home {
-        language: "sv",
-        title: "Välkommen",
-        text: "Den här sidan skickas över HTTP/1.1, HTTP/2 och HTTP/3.",
-    };
-    render(StatusCode::OK, page.language, &page)
+    current: &'static str,
 }
 
 pub async fn not_found() -> Response {
     let page = NotFound {
-        language: "en",
         title: "Page not found",
+        current: "",
     };
-    render(StatusCode::NOT_FOUND, page.language, &page)
+    render(StatusCode::NOT_FOUND, &page)
 }
 
-fn render(status: StatusCode, language: &'static str, page: &impl Template) -> Response {
+#[derive(Template)]
+#[template(path = "error.html")]
+struct Error {
+    title: &'static str,
+    current: &'static str,
+}
+
+/// The page for a request whose handler panicked. The panic is in the log.
+pub fn error(_: Box<dyn Any + Send>) -> Response {
+    let page = Error {
+        title: "Something went wrong",
+        current: "",
+    };
+    render(StatusCode::INTERNAL_SERVER_ERROR, &page)
+}
+
+/// Answer with a page, or with an empty 500 if it cannot be rendered.
+pub fn render(status: StatusCode, page: &impl Template) -> Response {
     match page.render() {
-        Ok(html) => {
-            let headers = [
-                (CONTENT_LANGUAGE, language),
-                // Tells caches to keep the languages apart.
-                (VARY, "accept-language"),
-            ];
-            (status, headers, Html(html)).into_response()
-        }
+        Ok(html) => (status, Html(html)).into_response(),
         Err(error) => {
             tracing::error!(%error, "could not render a page");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
