@@ -161,9 +161,9 @@ cleartext listener. It never comes from a header.
 
 The host is the one difference between protocols that a handler notices. HTTP/1.1 clients name it in
 the `Host` field, and HTTP/2 and HTTP/3 clients in the URI. Check `uri.host()` first, and `Host`
-when there is none. The two never disagree: the server refuses a request with several `Host`
-fields, an invalid one, or one that names another host than the URI, and an HTTP/1.1 request
-without one.
+when there is none. The two never name different hosts: the server refuses a request with several
+`Host` fields, an invalid one, or one that names another host than the URI, and an HTTP/1.1
+request without one.
 
 ## When a condition fails
 

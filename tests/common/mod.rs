@@ -499,3 +499,69 @@ pub async fn cleartext(address: SocketAddr, request: &str) -> String {
     soon(stream.read_to_string(&mut response)).await.unwrap();
     response
 }
+
+/// HPACK for `GET /` over `https`, from its static table, without `:authority` or `Host`.
+pub const HOSTLESS_GET: [u8; 3] = [0x82, 0x87, 0x84];
+
+/// Send one request over cleartext HTTP/2 (h2c with prior knowledge) as raw frames, with this
+/// header block in HPACK, which can leave out what clients always send.
+///
+/// Returns the response's status, where HPACK names it by its static table (200 and 400), and its
+/// content.
+pub async fn raw_http2(address: SocketAddr, block: &[u8]) -> (Option<u16>, Vec<u8>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const DATA: u8 = 0;
+    const HEADERS: u8 = 1;
+    const SETTINGS: u8 = 4;
+    const END_STREAM: u8 = 1;
+    const ACK: u8 = 1;
+    soon(async {
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        let mut start = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        start.extend(http2_frame(SETTINGS, 0, 0, &[]));
+        // The head and the end of stream 1.
+        start.extend(http2_frame(HEADERS, END_STREAM | 0x4, 1, block));
+        stream.write_all(&start).await.unwrap();
+        let (mut status, mut content) = (None, Vec::new());
+        loop {
+            let mut header = [0; 9];
+            stream.read_exact(&mut header).await.unwrap();
+            let length = u32::from_be_bytes([0, header[0], header[1], header[2]]);
+            let (kind, flags) = (header[3], header[4]);
+            let id = u32::from_be_bytes(header[5..].try_into().unwrap()) & 0x7fff_ffff;
+            let mut payload = vec![0; length as usize];
+            stream.read_exact(&mut payload).await.unwrap();
+            match (kind, id) {
+                (SETTINGS, 0) if flags & ACK == 0 => {
+                    let ack = http2_frame(SETTINGS, ACK, 0, &[]);
+                    stream.write_all(&ack).await.unwrap();
+                }
+                (HEADERS, 1) => {
+                    status = match payload.first() {
+                        Some(0x88) => Some(200),
+                        Some(0x8c) => Some(400),
+                        _ => None,
+                    };
+                }
+                (DATA, 1) => content.extend(payload),
+                // RST_STREAM and GOAWAY.
+                (3, 1) | (7, _) => panic!("the request ended with frame {kind}: {payload:02x?}"),
+                _ => {}
+            }
+            if id == 1 && matches!(kind, DATA | HEADERS) && flags & END_STREAM != 0 {
+                return (status, content);
+            }
+        }
+    })
+    .await
+}
+
+fn http2_frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
+    let length = u32::try_from(payload.len()).unwrap().to_be_bytes();
+    let mut frame = length[1..].to_vec();
+    frame.extend([kind, flags]);
+    frame.extend(stream.to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}

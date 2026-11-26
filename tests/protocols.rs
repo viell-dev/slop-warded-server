@@ -613,6 +613,25 @@ async fn cleartext_redirects_or_serves_the_application() {
         running.https.port()
     );
     assert!(response.contains(&location), "{response}");
+    // Requests that name no host have nowhere to go.
+    for (request, refusal) in [
+        (
+            "GET / HTTP/1.0\r\n\r\n",
+            "The request names no valid host.\n",
+        ),
+        (
+            "GET / HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n",
+            "The request names no valid host.\n",
+        ),
+        (
+            "GET / HTTP/1.1\r\nConnection: close\r\n\r\n",
+            "Malformed request: the HTTP/1.1 request has no Host field.\n",
+        ),
+    ] {
+        let response = common::cleartext(running.http.unwrap(), request).await;
+        assert!(response.contains(" 400 Bad Request\r\n"), "{response}");
+        assert!(response.ends_with(refusal), "{response}");
+    }
 
     let server = common::server(&authority).serve_http(any_port);
     let running = Running::start(server, warded_app());
@@ -693,10 +712,30 @@ fn http3_error(error: &BoxError) -> Option<h3::error::Code> {
     }
 }
 
-/// The status of a response, its content if it is a 200, or the HTTP/3 error instead.
+// The reasons that the server gives for refusing a malformed request.
+const WHITESPACE: &str = "a field value begins or ends with whitespace";
+const SEVERAL: &str = "the request has several Host fields";
+const MISSING: &str = "the HTTP/1.1 request has no Host field";
+const INVALID: &str = "the Host field is not a valid host";
+const TARGET: &str = "the request target names an invalid host";
+const OTHER: &str = "the Host field names another host than :authority";
+
+/// The reason in the server's response to a malformed request.
+fn refusal(content: &str) -> Option<&str> {
+    content
+        .strip_prefix("Malformed request: ")?
+        .strip_suffix(".\n")
+}
+
+/// What a request got: the content of a 200, the reason for the server's 400, another status, or
+/// the HTTP/3 error.
 async fn outcome(response: Result<Response, BoxError>) -> String {
     match response {
         Ok(response) if response.status() == StatusCode::OK => text(response).await.unwrap(),
+        Ok(response) if response.status() == StatusCode::BAD_REQUEST => {
+            let content = text(response).await.unwrap();
+            refusal(&content).map_or_else(|| format!("400 {content:?}"), str::to_owned)
+        }
         Ok(response) => response.status().to_string(),
         Err(error) => {
             http3_error(&error).map_or_else(|| format!("{error:?}"), |code| code.to_string())
@@ -737,7 +776,7 @@ async fn whitespace_around_a_field_value_is_malformed() {
             request.headers_mut().insert("x-tenant", field);
             let malformed = value.trim_matches([' ', '\t']) != value;
             let expected = match version {
-                Version::HTTP_2 if malformed => "400 Bad Request",
+                Version::HTTP_2 if malformed => WHITESPACE,
                 Version::HTTP_3 if malformed => "H3_MESSAGE_ERROR",
                 // Hyper's parser removes the whitespace, as RFC 9112 says.
                 _ => http1,
@@ -746,16 +785,21 @@ async fn whitespace_around_a_field_value_is_malformed() {
             assert_eq!(actual, expected, "{version:?} {value:?}");
         }
     }
+    // A refused HEAD has the head of a refused GET.
     let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
         .await
         .unwrap();
-    let mut request = get("/");
-    request
-        .headers_mut()
-        .insert("x-tenant", HeaderValue::from_static("acme "));
+    let mut request = request("HEAD", "/", Body::empty());
+    let field = HeaderValue::from_static("acme ");
+    request.headers_mut().insert("x-tenant", field);
     let response = client.send(request).await.unwrap();
-    let reason = "Malformed request: a field value begins or ends with whitespace.\n";
-    assert_eq!(text(response).await.unwrap(), reason);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let length = format!("Malformed request: {WHITESPACE}.\n").len();
+    assert_eq!(
+        response.headers()[header::CONTENT_LENGTH],
+        length.to_string()
+    );
+    assert_eq!(text(response).await.unwrap(), "");
 }
 
 /// An application that answers with the target and the `Host` fields that it sees.
@@ -807,29 +851,45 @@ async fn http1_requests_name_one_valid_host() {
         ),
         ("http://localhost/", "1.0", "", "http://localhost/ []"),
         // Refused by the server, before the application.
-        ("/", "1.1", "", "refused"),
-        ("/", "1.1", "Host: one\r\nHost: two\r\n", "refused"),
-        ("/", "1.1", "Host: one\r\nHost: one\r\n", "refused"),
-        ("/", "1.0", "Host: one\r\nHost: two\r\n", "refused"),
-        ("/", "1.1", "Host: not a host/x\r\n", "refused"),
-        ("/", "1.1", "Host: user@localhost\r\n", "refused"),
-        ("/", "1.1", "Host: localhost:abc\r\n", "refused"),
-        ("/", "1.1", "Host: [bogus]\r\n", "refused"),
-        ("http://localhost/", "1.1", "", "refused"),
+        ("/", "1.1", "", MISSING),
+        ("/", "1.1", "Host: one\r\nHost: two\r\n", SEVERAL),
+        ("/", "1.1", "Host: one\r\nHost: one\r\n", SEVERAL),
+        ("/", "1.0", "Host: one\r\nHost: two\r\n", SEVERAL),
+        ("/", "1.1", "Host: not a host/x\r\n", INVALID),
+        ("/", "1.1", "Host: user@localhost\r\n", INVALID),
+        ("/", "1.1", "Host: localhost:abc\r\n", INVALID),
+        ("/", "1.1", "Host: [bogus]\r\n", INVALID),
+        ("/", "1.1", "Host: a[b]\r\n", INVALID),
+        ("/", "1.1", "Host: a[b]:80\r\n", INVALID),
+        ("/", "1.1", "Host: :80\r\n", INVALID),
+        ("http://localhost/", "1.1", "", MISSING),
         (
             "http://localhost/",
             "1.1",
             "Host: a\r\nHost: b\r\n",
-            "refused",
+            SEVERAL,
         ),
+        (
+            "http://localhost/",
+            "1.1",
+            "Host: not a host/x\r\n",
+            INVALID,
+        ),
+        ("http://localhost/", "1.1", "Host: user@evil\r\n", INVALID),
         (
             "http://user@localhost/",
             "1.1",
             "Host: localhost\r\n",
-            "refused",
+            TARGET,
         ),
-        // Refused by Hyper already: a value folded onto a second line.
+        ("http://a[b]/", "1.1", "Host: localhost\r\n", TARGET),
+        ("http://:80/", "1.1", "Host: localhost\r\n", TARGET),
+        // Percent-encoding, which `http` refuses in a host.
+        ("/", "1.1", "Host: ex%41mple.com\r\n", INVALID),
+        // Refused by Hyper already: a value folded onto a second line, and a percent-encoded host
+        // in the target.
         ("/", "1.1", "Host: local\r\n host\r\n", "400"),
+        ("http://ex%41mple.com/", "1.1", "Host: localhost\r\n", "400"),
     ] {
         let request = format!("GET {target} HTTP/{version}\r\n{fields}Connection: close\r\n\r\n");
         for tls in [false, true] {
@@ -846,11 +906,10 @@ async fn http1_requests_name_one_valid_host() {
             } else {
                 common::cleartext(running.http.unwrap(), &request).await
             };
-            let (head, body) = response.split_once("\r\n\r\n").unwrap();
-            let status = head.split(' ').nth(1).unwrap();
-            let actual = match status {
-                "200" => body,
-                "400" if body.starts_with("Malformed request: ") => "refused",
+            let (head, content) = response.split_once("\r\n\r\n").unwrap();
+            let actual = match head.split(' ').nth(1).unwrap() {
+                "200" => content,
+                "400" => refusal(content).unwrap_or("400"),
                 other => other,
             };
             assert_eq!(actual, expected, "TLS {tls}: {request:?}");
@@ -859,9 +918,56 @@ async fn http1_requests_name_one_valid_host() {
 }
 
 #[tokio::test]
+async fn an_http1_connection_outlives_a_refusal() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let authority = Authority::new();
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, hosts());
+    let mut stream = tokio::net::TcpStream::connect(running.http.unwrap())
+        .await
+        .unwrap();
+    // Refused with bodies that the application never reads, and a refused HEAD.
+    for request in [
+        "POST /a HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello",
+        "POST /b HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        "HEAD /c HTTP/1.1\r\n\r\n",
+        "GET /d HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    ] {
+        stream.write_all(request.as_bytes()).await.unwrap();
+    }
+    let mut responses = String::new();
+    common::soon(stream.read_to_string(&mut responses))
+        .await
+        .unwrap();
+    let mut parsed = Vec::new();
+    let mut rest = responses.as_str();
+    while let Some((head, after)) = rest.split_once("\r\n\r\n") {
+        let length = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length: "))
+            .map_or(0, |length| length.parse().unwrap());
+        // The response to HEAD has the length of the response to GET, and no content.
+        let length = if parsed.len() == 2 { 0 } else { length };
+        let status = head.split(' ').nth(1).unwrap();
+        parsed.push((status, &after[..length]));
+        rest = &after[length..];
+    }
+    let refused = format!("Malformed request: {MISSING}.\n");
+    let expected = [
+        ("400", refused.as_str()),
+        ("400", refused.as_str()),
+        ("400", ""),
+        ("200", r#"/d ["localhost"]"#),
+    ];
+    assert_eq!(parsed, expected, "{responses}");
+}
+
+#[tokio::test]
 async fn an_http2_host_field_names_the_host_of_the_authority() {
     let authority = Authority::new();
-    let running = Running::start(common::server(&authority), hosts());
+    let server = common::server(&authority).serve_http(([127, 0, 0, 1], 0).into());
+    let running = Running::start(server, hosts());
     let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
         .await
         .unwrap();
@@ -872,11 +978,11 @@ async fn an_http2_host_field_names_the_host_of_the_authority() {
             &["LocalHost:443"],
             r#"https://localhost/ ["LocalHost:443"]"#,
         ),
-        (&["other.example"], "400 Bad Request"),
-        (&["localhost:8443"], "400 Bad Request"),
-        (&["user@localhost"], "400 Bad Request"),
-        (&[""], "400 Bad Request"),
-        (&["localhost", "localhost"], "400 Bad Request"),
+        (&["other.example"], OTHER),
+        (&["localhost:8443"], OTHER),
+        (&["user@localhost"], INVALID),
+        (&[""], INVALID),
+        (&["localhost", "localhost"], SEVERAL),
     ] {
         let mut request = get("/");
         for host in fields {
@@ -886,9 +992,19 @@ async fn an_http2_host_field_names_the_host_of_the_authority() {
         let actual = outcome(client.send(request).await).await;
         assert_eq!(actual, expected, "{fields:?}");
     }
+    for target in ["https://user@localhost/", "https://a[b]/", "https://:443/"] {
+        let request = axum::http::Request::get(target)
+            .body(Body::empty())
+            .unwrap();
+        let actual = outcome(client.send(request).await).await;
+        assert_eq!(actual, TARGET, "{target}");
+    }
+    // Neither :authority nor Host, as from an intermediary for an HTTP/1.0 request without Host.
+    let response = common::raw_http2(running.http.unwrap(), &common::HOSTLESS_GET).await;
+    assert_eq!(response, (Some(200), b"/ []".to_vec()));
 }
 
-/// Give a response the framing fields that a test case names.
+// Give a response the framing fields that a test case names.
 fn frame_as(headers: &mut HeaderMap, case: &str) {
     let fields: &[(_, &'static str)] = match case {
         "wrong" => &[(header::CONTENT_LENGTH, "6")],

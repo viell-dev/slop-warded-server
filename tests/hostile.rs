@@ -251,6 +251,14 @@ async fn a_malformed_http3_head_does_not_reach_the_application() {
         let bytes = with_body(&more);
         assert!(raw(&client.quic, &bytes).await.is_err(), "{more:02x?}");
     }
+    // GET / over https, without :authority or Host, which h3 refuses itself, and with an
+    // :authority that is not a host.
+    let invalid = [&[0x50, 4][..], b"a[b]"].concat();
+    for authority in [&[][..], &invalid] {
+        let block = [&[0, 0, 0xd7, 0xd1][..], authority, &[0xc1]].concat();
+        let bytes = frame(1, block.len() as u64, &block);
+        assert!(raw(&client.quic, &bytes).await.is_err(), "{block:02x?}");
+    }
     let response = common::send_http3(&mut client.send, get("/"))
         .await
         .unwrap();

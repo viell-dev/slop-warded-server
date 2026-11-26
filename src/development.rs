@@ -92,7 +92,7 @@ fn uncompressed(mut request: Request) -> Request {
 /// Why the development address refuses a request.
 #[derive(Debug, PartialEq)]
 enum Refusal {
-    /// It names another host than an IP address or `localhost`, or none, or several.
+    /// It names another host than an IP address or `localhost`, or none.
     Host(String),
     /// Another site's page made the browser send it.
     OtherSite(String),
@@ -117,13 +117,10 @@ enum Refusal {
 ///   also covers browsers without Fetch Metadata. Any IP address will not do here, since a page can
 ///   come from a server's.
 fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
-    let mut hosts = headers.get_all(HOST).iter();
-    let host = hosts
-        .next()
+    // `fields::check_request` has refused several Host fields already.
+    let host = headers
+        .get(HOST)
         .map(|host| String::from_utf8_lossy(host.as_bytes()));
-    if hosts.next().is_some() {
-        return Some(Refusal::Host("several".to_owned()));
-    }
     let target = uri.authority().map(Authority::as_str);
     if host.is_none() && target.is_none() {
         return Some(Refusal::Host("none".to_owned()));
@@ -480,7 +477,7 @@ mod tests {
         for (uri, fields) in [
             ("/", vec![]),
             ("/", vec![("host", "attacker.example")]),
-            ("/", vec![("host", "localhost"), ("host", "localhost")]),
+            ("/", vec![("host", "")]),
             ("http://attacker.example/", vec![]),
             ("http://localhost/", vec![("host", "attacker.example")]),
             ("http://attacker.example/", vec![("host", "localhost")]),

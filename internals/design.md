@@ -177,15 +177,18 @@ the application and Warded see a well-formed head on every protocol.
 - **One host for each request.** Neither Hyper nor h2 checks `Host`, and h3 compares only the
   first field with `:authority`, so a route that matches on the host could see two, or one that
   the URI contradicts. `Authority` from `http` checks the characters of a host; `src/fields.rs` adds
-  what it lets through: user information, a port that is not a number, and brackets that hold no
-  IP address.
+  what it lets through: user information, a port that is not a number, an empty host before a
+  port, and brackets anywhere but around an IP address.
 - **An HTTP/1 target's host replaces the field's** rather than leaving both. RFC 9112 section
   3.2.2 tells the server to use the target's, and an application that reads the field would
-  otherwise use the other. The field stays required over HTTP/1.1, as section 3.2 says for every
-  HTTP/1.1 request.
+  otherwise use the other. The field stays required over HTTP/1.1 and has to be valid, as section
+  3.2 says for every HTTP/1.1 request, with no exception for a target in absolute form.
 - **HTTP/2 and HTTP/3 compare hosts as RFC 3986 normalizes them**, in any case and with the
   scheme's default port or without, as RFC 9113 section 8.3.1 allows an origin server. h3 compares
   the first field exactly, as RFC 9114 section 4.3.1 says, and is stricter.
+- **HTTP/2 may name no host**, as HTTP/1.0 may: RFC 9113 section 8.3.1 allows a request without
+  authority information, which an intermediary makes of an HTTP/1.0 request without `Host`. HTTP/3
+  requires one (RFC 9114 section 4.3.1), which h3 checks too.
 - **Before the development address's own checks**, which answer a 403 for a well-formed request for
   another host, or with none over HTTP/1.0.
 

@@ -104,3 +104,40 @@ async fn a_length_that_the_content_does_not_have_is_logged() {
                    declared=[\"6\"] length=5";
     assert!(log.contains(warning), "{log}");
 }
+
+#[tokio::test]
+async fn an_invalid_length_is_logged() {
+    use axum::{
+        body::Body,
+        http::{HeaderValue, header::CONTENT_LENGTH},
+        response::Response,
+    };
+
+    let authority = Authority::new();
+    // Content of unknown length, whose two lengths cannot both be right.
+    let app = tower::service_fn(|_: axum::extract::Request| async {
+        let (mut sender, body) = common::channel();
+        tokio::spawn(async move { sender.send_data("hello".into()).await });
+        let mut response = Response::new(Body::new(body));
+        for length in ["5", "6"] {
+            let length = HeaderValue::from_static(length);
+            response.headers_mut().append(CONTENT_LENGTH, length);
+        }
+        Ok::<_, std::convert::Infallible>(response)
+    });
+    let log = logged(|| async {
+        let running = Running::start(
+            common::server(&authority),
+            axum::Router::new().fallback_service(app),
+        );
+        let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
+            .await
+            .unwrap();
+        let response = client.get("/").await.unwrap();
+        assert!(!response.headers().contains_key(CONTENT_LENGTH));
+        assert_eq!(common::text(response).await.unwrap(), "hello");
+    })
+    .await;
+    let warning = "the application declared an invalid Content-Length declared=[\"5\", \"6\"]";
+    assert!(log.contains(warning), "{log}");
+}

@@ -372,3 +372,27 @@ async fn ranges_of_pages_are_left_as_they_are() {
     assert!(html.starts_with("<p>Hi") && html.contains(EVENTS), "{html}");
     assert_eq!(html.len(), length);
 }
+
+#[tokio::test]
+async fn malformed_hosts_are_refused_before_the_development_address_checks_them() {
+    let authority = Authority::new();
+    let running = Running::start(development(&authority), site());
+    let address = running.development.unwrap();
+    for (fields, refusal) in [
+        ("", "the HTTP/1.1 request has no Host field"),
+        (
+            "Host: localhost\r\nHost: localhost\r\n",
+            "the request has several Host fields",
+        ),
+    ] {
+        let request = format!("GET / HTTP/1.1\r\n{fields}Connection: close\r\n\r\n");
+        let response = common::cleartext(address, &request).await;
+        assert!(response.contains(" 400 Bad Request\r\n"), "{response}");
+        let refusal = format!("\r\n\r\nMalformed request: {refusal}.\n");
+        assert!(response.ends_with(&refusal), "{response}");
+    }
+    // HTTP/2 without a host is well-formed, but not for this computer.
+    let (_, content) = common::raw_http2(address, &common::HOSTLESS_GET).await;
+    let content = String::from_utf8(content).unwrap();
+    assert!(content.starts_with(REFUSED), "{content}");
+}
