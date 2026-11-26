@@ -34,7 +34,7 @@ pub fn app(notes: Notes) -> Result<Router, DefinitionError> {
         )
         .route(
             delete().and(path("/notes/{id}")?),
-            any(notes::remove).with_state(notes),
+            any(notes::remove).with_state(notes.clone()),
         )
         .fallback(any(|| async {
             Problem::new(StatusCode::NOT_FOUND, "nothing is here")

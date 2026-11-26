@@ -42,8 +42,15 @@ async fn the_start_lists_the_endpoints() {
     let app = app(Notes::default()).unwrap();
     let (status, body) = send(&app, "GET", "/", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["endpoints"][0], "GET /notes");
-    assert_eq!(body["endpoints"].as_array().unwrap().len(), 4);
+    let endpoints = body["endpoints"].as_array().unwrap();
+    for endpoint in [
+        "GET /notes",
+        "POST /notes",
+        "GET /notes/{id}",
+        "DELETE /notes/{id}",
+    ] {
+        assert!(endpoints.contains(&json!(endpoint)), "missing {endpoint}");
+    }
 }
 
 #[tokio::test]
