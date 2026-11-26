@@ -125,9 +125,11 @@ guide](./json-api.md#call-it-from-a-browser-on-another-site).
 
 ## WebAssembly
 
-`ServeDir` sends `.wasm` files as `application/wasm`, which browsers require to start them while
-they download. Trunk writes its files next to `index.html` instead of in a directory; build with
-`trunk build --release --public-url /assets/` and copy everything except `index.html` to `assets`.
+`SinglePageApp` sends `.wasm` files as `application/wasm`, which browsers require to start them
+while they download. Trunk writes its files next to `index.html` instead of in a directory. They are
+served from there, but browsers must ask again before they use them. To let browsers keep them,
+build with `trunk build --release --public-url /assets/` and move everything except `index.html` to
+`assets`.
 
 ## Frameworks that render on the server
 
