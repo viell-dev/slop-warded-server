@@ -111,11 +111,11 @@ enum Refusal {
 ///   that the browser marks as `Sec-Fetch-Site: cross-site` is refused, unless it opens a page with
 ///   GET or HEAD, and not into `<object>` or `<embed>`. Clients that send no such field, such as
 ///   curl, are not affected.
-/// - **Not changes from other origins.** For browsers without Fetch Metadata, a request with another
-///   method than GET, HEAD, OPTIONS or TRACE, or that asks to upgrade the connection, as WebSockets
-///   do, is refused when its `Origin` is not on this computer: a loopback address, `localhost`, or
-///   a name below `.localhost`. Any IP address will not do here, since a page can come from a
-///   server's.
+/// - **Not changes from other origins.** A request with another method than GET, HEAD, OPTIONS or
+///   TRACE, or that asks to upgrade the connection, as WebSockets do, is refused when its `Origin`
+///   is not on this computer: a loopback address, `localhost`, or a name below `.localhost`. This
+///   also covers browsers without Fetch Metadata. Any IP address will not do here, since a page can
+///   come from a server's.
 fn refusal(method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Refusal> {
     let mut hosts = headers.get_all(HOST).iter();
     let host = hosts
