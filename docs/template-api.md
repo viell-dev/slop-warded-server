@@ -98,8 +98,8 @@ Add a `pinned` flag to a note. The example store is in memory, so restarting cle
 2. In `src/routes/tests.rs`, update the expected `note` in
    `notes_can_be_created_read_and_deleted` to `json!({ "id": 1, "text": "milk", "pinned": false })`.
    Keep its POST body as it is to check the default.
-3. Restart and run this from another terminal. `GET /notes` should include the note with
-   `"pinned":true`.
+3. Restart and run these commands from another terminal. The first sends a note as JSON.
+   The second lists the notes, including the new one with `"pinned":true`.
 
 ```sh
 curl --json '{"text":"milk","pinned":true}' http://127.0.0.1:3000/notes

@@ -134,15 +134,12 @@ anything, get a 404 too, unless they send `Accept: text/html`.
 To run the checks as written, save the listing as `examples/spa.rs` and use
 `cargo run --example spa`. To serve your build with the template's API, put its routes under
 `/api` (for example, `/notes` becomes `/api/notes`). Update the endpoint list and the tests to
-match. In `src/main.rs`, wrap the result of `routes::app` before passing it to `serve`:
+match. In `src/main.rs`, wrap the result of `routes::app` with
+`warded_server::SinglePageApp::new("dist").api("/api", app).into_router()` before passing it to
+`serve`. Use the directory of your build in place of `dist`.
 
-```text
-let app = warded_server::SinglePageApp::new("dist").api("/api", app).into_router();
-```
-
-Use the directory of your build in place of `dist`. To apply logging and compression to both
-the files and the API, move the template's `DefaultMiddleware` to the combined router returned
-by `into_router`.
+To apply logging and compression to both the files and the API, move the template's
+`DefaultMiddleware` to the combined router returned by `into_router`.
 
 For build tools that put the files with generated names elsewhere, name that directory with
 `assets`, as in `SinglePageApp::new("dist").assets("static")`. Its HTML files get `no-cache`, in
