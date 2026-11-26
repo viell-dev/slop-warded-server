@@ -109,8 +109,8 @@ fn finisher(method: &Method, version: Version) -> Finish {
 }
 
 /// Give a response the framing of its content, and no content or framing that its status rules
-/// out (RFC 9110 sections 8.6, 15.2, 15.3.5, 15.3.6 and 15.4.5). `HTTP1` says whether HTTP/1
-/// carries it.
+/// out (RFC 9110 sections 8.6, 15.2, 15.3.5, 15.3.6 and 15.4.5). An informational status becomes
+/// a 500, apart from a 101 over HTTP/1. `HTTP1` says whether HTTP/1 carries it.
 ///
 /// Of the protocol implementations, only Hyper's HTTP/1.1 does most of this. It sends a length that
 /// the application declares for content of known length, which it checks only in debug builds, by
@@ -150,11 +150,11 @@ fn finish<const HTTP1: bool>(mut response: Response) -> Response {
 /// Axum does for its handlers, but the application can be any service.
 fn finish_head<const HTTP1: bool>(mut response: Response) -> Response {
     let status = response.status();
-    let without_content = matches!(
+    let no_content = matches!(
         status,
         StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
     );
-    if status.is_informational() || without_content {
+    if status.is_informational() || no_content {
         return finish::<HTTP1>(response);
     }
     let length = match response.body().size_hint().exact() {
