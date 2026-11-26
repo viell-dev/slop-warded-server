@@ -17,7 +17,7 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `failed to run custom build command for aws-lc-sys`                   | There is no C compiler; see [what you need](./getting-started.md#what-you-need)          |
 | `package … requires rustc 1.99.1`                                     | Run `rustup update`                                                                      |
-| `Access is denied. (os error 5)` when rebuilding on Windows             | Stop the running server first so Cargo can replace its executable |
+| `Access is denied. (os error 5)` when rebuilding on Windows           | Stop the running server first so Cargo can replace its executable                        |
 | `the http3 feature needs panic = "unwind"`                            | Remove `panic = "abort"` from `Cargo.toml`, or turn off [HTTP/3](./http3.md#turn-it-off) |
 | `expected Infallible` (or `!`), `found DispatchError<…>`              | Pass Warded routes through `warded_server::app` before `serve`                           |
 | `AddExtension<Router, ConnectInfo<…>>: IntoResponse` is not satisfied | Pass the router itself; the client's address is there without it                         |
@@ -29,21 +29,21 @@ RUST_LOG=info,warded_server=debug,tower_http=debug cargo run
 
 ## It does not start
 
-| Message                                                          | Cause and fix                                                                       |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `cannot listen on … for HTTPS over TCP: Address already in use`  | Something uses the port, often another copy of the server                           |
-| `cannot listen on … for development over HTTP: Address already in use` | Another project uses `127.0.0.1:3000`; stop it, or set `WARDED_DEV_ADDR` to another port |
-| `cannot listen on … for HTTP/3 over UDP: Address already in use` | Something uses the UDP port; choose another, or turn off HTTP/3                     |
-| `cannot listen on …: Permission denied`                          | Ports below 1024 need a permission; see [deployment](./deployment.md#systemd)       |
-| `WARDED_TLS_CERT is needed …`                                    | It listens beyond this computer, where it needs a [certificate](./certificates.md)  |
-| `WARDED_HTTPS_ADDR is not an address and port`                   | Use an IP address with a port, such as `0.0.0.0:8443`, and not a host name          |
-| `WARDED_DEV_ADDR must be a loopback address …`                   | It has no TLS; use `127.0.0.1` or `[::1]`, and HTTPS for others; see [the development address](./configuration.md#the-development-address) |
-| `the development address … must be a loopback address …`         | The same, for `Server::development` in code                                         |
-| `cannot read …: I/O error: No such file or directory`            | The path is wrong, or relative to another directory than you think                  |
-| `cannot read …: I/O error: Permission denied`                    | The program's user may not read the file; see [deployment](./deployment.md#systemd) |
-| `cannot read …: no items found`                                  | The file holds no certificate, or no private key, in PEM form                       |
-| `the limit … is zero or too large`                               | See [limits](./configuration.md#limits)                                             |
-| `keys may not be consistent: KeyMismatch`                        | The key belongs to another certificate, or the chain is in the wrong order          |
+| Message                                                                | Cause and fix                                                                                                                              |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cannot listen on … for HTTPS over TCP: Address already in use`        | Something uses the port, often another copy of the server                                                                                  |
+| `cannot listen on … for development over HTTP: Address already in use` | Another project uses `127.0.0.1:3000`; stop it, or set `WARDED_DEV_ADDR` to another port                                                   |
+| `cannot listen on … for HTTP/3 over UDP: Address already in use`       | Something uses the UDP port; choose another, or turn off HTTP/3                                                                            |
+| `cannot listen on …: Permission denied`                                | Ports below 1024 need a permission; see [deployment](./deployment.md#systemd)                                                              |
+| `WARDED_TLS_CERT is needed …`                                          | It listens beyond this computer, where it needs a [certificate](./certificates.md)                                                         |
+| `WARDED_HTTPS_ADDR is not an address and port`                         | Use an IP address with a port, such as `0.0.0.0:8443`, and not a host name                                                                 |
+| `WARDED_DEV_ADDR must be a loopback address …`                         | It has no TLS; use `127.0.0.1` or `[::1]`, and HTTPS for others; see [the development address](./configuration.md#the-development-address) |
+| `the development address … must be a loopback address …`               | The same, for `Server::development` in code                                                                                                |
+| `cannot read …: I/O error: No such file or directory`                  | The path is wrong, or relative to another directory than you think                                                                         |
+| `cannot read …: I/O error: Permission denied`                          | The program's user may not read the file; see [deployment](./deployment.md#systemd)                                                        |
+| `cannot read …: no items found`                                        | The file holds no certificate, or no private key, in PEM form                                                                              |
+| `the limit … is zero or too large`                                     | See [limits](./configuration.md#limits)                                                                                                    |
+| `keys may not be consistent: KeyMismatch`                              | The key belongs to another certificate, or the chain is in the wrong order                                                                 |
 
 ## Clients cannot connect
 
@@ -108,14 +108,14 @@ covers routes in detail.
 
 ## A 400 or 500 from an extractor
 
-| Response or log                                                                         | Cause and fix                                                                     |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `invalid path: missing field …`                                                         | The fields of the type in `Params` are not the names in the pattern               |
-| `invalid path: invalid type: map, …`                                                    | `Params` takes a struct, also for one capture                                     |
-| `invalid path: id: invalid digit found in string` | The path capture is not a number. If you meant to reach a fixed path such as `/notes/count`, put its route above the pattern. See [Declaring routes](./requests.md#declaring-routes). |
-| `Invalid URL: missing field …`, or a 500 with `Wrong number of path arguments for Path` | The handler uses Axum's `Path` in a Warded route; use `Params`                    |
-| `Params needs a handler that a Warded route selected`                                   | The handler is in an Axum router; use `Path` there                                |
-| `Missing request extension`                                                             | A test without the server has to insert what it adds; see [testing](./testing.md) |
+| Response or log                                                                         | Cause and fix                                                                                                           |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `invalid path: missing field …`                                                         | The fields of the type in `Params` are not the names in the pattern                                                     |
+| `invalid path: invalid type: map, …`                                                    | `Params` takes a struct, also for one capture                                                                           |
+| `invalid path: id: invalid digit found in string`                                       | A capture is not a number. A fixed path such as `/notes/count` goes [above the pattern](./requests.md#declaring-routes) |
+| `Invalid URL: missing field …`, or a 500 with `Wrong number of path arguments for Path` | The handler uses Axum's `Path` in a Warded route; use `Params`                                                          |
+| `Params needs a handler that a Warded route selected`                                   | The handler is in an Axum router; use `Path` there                                                                      |
+| `Missing request extension`                                                             | A test without the server has to insert what it adds; see [testing](./testing.md)                                       |
 
 ## Other 500s
 
