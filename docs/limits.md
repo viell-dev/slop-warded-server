@@ -117,11 +117,13 @@ computer, and not for others:
 - It serves plain HTTP, on loopback addresses only. Browsers use HTTP/1.1 there; h2c clients can
   use HTTP/2. HTTP/2 in browsers and HTTP/3 need HTTPS, and Warded's `secured()` condition does not
   hold there.
-- It answers only requests for an IP address, `localhost` or a name below `.localhost`. A name for
-  this computer in the hosts file gets a 403, as do requests that other sites make, except to open
-  a page; see [configuration](./configuration.md#the-development-address). There is no setting
-  for other names.
-- Its responses are not compressed, so that pages can get the reload script.
+- It answers only requests for a loopback address, `localhost` or a name below `.localhost`. Other
+  addresses, such as `0.0.0.0`, and a name for this computer in the hosts file get a 403, as do
+  requests that other sites make, except to open a page; see
+  [configuration](./configuration.md#the-development-address). There is no setting for other
+  names.
+- While live reload is on, its responses are not compressed, so that pages can get the reload
+  script. With `live_reload(false)`, the application's compression applies.
 - Pages reload when the server starts again, and not when a file changes by itself. A watcher such
   as bacon has to restart it, also for files that the server reads, such as those in `static/`.
 - `.cargo/config.toml` applies to every program that Cargo starts, `cargo run --release` included.

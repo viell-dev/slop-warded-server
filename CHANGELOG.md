@@ -13,18 +13,25 @@ New projects open in a browser at once, and their code holds no wiring
   over plain HTTP on a loopback address, for a browser on this computer without a certificate.
   Other addresses are refused, because nothing on it is encrypted. Browsers use HTTP/1.1 there, and
   Warded's `secured()` does not hold. Its HTML pages reload by themselves when the server restarts,
-  unless `live_reload(false)` turns that off, and its responses are not compressed. See
+  unless `live_reload(false)` turns that off; while they do, its responses are not compressed. See
   [configuration](https://viell-dev.github.io/slop-warded-server/configuration.html#the-development-address).
 - **The development address answers only this computer's browser:** a 403 for requests for another
-  host than an IP address, `localhost` or a name below `.localhost` (against DNS rebinding), for
-  those that the browser marks as made by another site, except to open a page, and for changes
+  host than a loopback address, `localhost` or a name below `.localhost` (against DNS rebinding),
+  for those that the browser marks as made by another site, except to open a page, and for changes
   and WebSockets from an origin that is not on this computer.
+  - Other IP addresses, such as `0.0.0.0`, get the 403 for the host as well. Browsers send no Fetch
+    Metadata to them, so a script on another site could read pages through `http://0.0.0.0:3000`.
+  - A request that the browser marks as `Sec-Fetch-Site: same-origin` has its origin accepted, so
+    that a site's own form under `Referrer-Policy: no-referrer`, which Chromium sends with
+    `Origin: null`, is not refused.
 - The log says what to open, such as `open http://127.0.0.1:3000/ in a browser`. The `serving` line
   has a `development` field.
 - **Helpers**, over `tracing-subscriber`, `tower-http` and Axum, behind new default features:
   `init_logging` (`logging`), `DefaultMiddleware` with tracing, compression and a 500 for panics
-  (`middleware`), and `StaticFiles` and `SinglePageApp` (`files`). The library brings 28 more
-  crates with all of them.
+  (`middleware`), and `StaticFiles` and `SinglePageApp` (`files`). With all three, the library
+  depends on 26 more crates, as `cargo tree -e normal` counts them on Linux.
+  - `StaticFiles` serves files, and no directories: a path to one is a 404, with or without a slash
+    at the end. `ServeDir`'s redirect to the path with a slash left out the prefix.
 - `Error::Development` reports a development address that is not loopback.
 - **Templates:** each sets `WARDED_DEV_ADDR=127.0.0.1:3000` in `.cargo/config.toml`, for
   `cargo run`, and uses the helpers in place of its own wiring. Their READMEs show how

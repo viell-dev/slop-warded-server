@@ -75,13 +75,16 @@ development setting becomes a deployed one.
 - **Loopback is not a boundary in the browser.** Any page can make the browser send requests to
   `127.0.0.1`, and a DNS name whose answer changes to `127.0.0.1` makes them same-origin for that
   page (DNS rebinding). So the address refuses, before the application and the reload stream,
-  requests for other hosts than IP addresses, `localhost` and names below `.localhost`, as Vite's
-  `server.allowedHosts` does; rebinding needs a name that the attacker's DNS answers. It also
-  follows Fetch Metadata's resource isolation policy, and refuses changes and WebSockets whose
-  `Origin` is not on this computer, which covers browsers without Fetch Metadata: a loopback
-  address, `localhost` or a name below it. Any IP address does for the host, which the browser connected to, but not for the
-  origin, since pages come from servers' addresses too. Names from the hosts file are refused with
-  the rest: a setting for them waits until someone needs one.
+  requests for other hosts than loopback addresses, `localhost` and names below `.localhost`, as
+  Vite's `server.allowedHosts` does; rebinding needs a name that the attacker's DNS answers. Other
+  IP addresses are refused too: `http://0.0.0.0` reaches the listener, but is not a secure context,
+  so browsers send it no Fetch Metadata, and a script on another site could read from it. The
+  listener is on loopback, so other addresses arrive only through forwarding. It also follows
+  Fetch Metadata's resource isolation policy, and refuses changes and WebSockets whose `Origin` is
+  not on this computer, which covers browsers without Fetch Metadata. A request marked
+  `Sec-Fetch-Site: same-origin` skips that check: pages cannot set the field, and Chromium sends a
+  site's own form with `Origin: null` under `Referrer-Policy: no-referrer`. Names from the hosts
+  file are refused with the rest: a setting for them waits until someone needs one.
 
 ### Live reload
 
