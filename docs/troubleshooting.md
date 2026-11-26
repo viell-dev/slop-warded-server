@@ -135,10 +135,10 @@ with the reason. Fix the client.
 
 ## Other 500s
 
-| Log                                                           | Cause and fix                                                                                                                                             |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `could not select a route … trusted HTTPS context is missing` | A test without the server has to insert [`TransportSecurity`](./testing.md), or the project uses two versions of `warded`; import it from `warded_server` |
-| `the application responded with an informational status`      | The handler returned a 1xx status over HTTP/3                                                                                                             |
+| Log                                                           | Cause and fix                                                                                                                                                     |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `could not select a route … trusted HTTPS context is missing` | A test without the server has to insert [`TransportSecurity`](./testing.md), or the project uses two versions of `warded`; import it from `warded_server`         |
+| `the application responded with an informational status`      | The handler answered with a 1xx status, such as 103, as its final response, which none can be; the client got a 500. Over HTTP/1.1, a 101 upgrades the connection |
 
 ## A warning about `Content-Length`
 

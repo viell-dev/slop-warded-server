@@ -116,6 +116,14 @@ fn finisher(method: &Method, version: Version) -> Finish {
 /// the application declares for content of known length, which it checks only in debug builds, by
 /// panicking.
 fn finish<const HTTP1: bool>(mut response: Response) -> Response {
+    let status = response.status();
+    // The one final response cannot be informational. Hyper answers 500 for one over HTTP/1.1 and
+    // closes the connection, and resets the stream over HTTP/2. A 101 is how Hyper upgrades an
+    // HTTP/1.1 connection, and HTTP/2 and HTTP/3 have none.
+    if status.is_informational() && !(HTTP1 && status == StatusCode::SWITCHING_PROTOCOLS) {
+        tracing::error!(%status, "the application responded with an informational status");
+        response = StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     match response.status() {
         StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED => {
             *response.body_mut() = Body::empty();
@@ -142,9 +150,11 @@ fn finish<const HTTP1: bool>(mut response: Response) -> Response {
 /// Axum does for its handlers, but the application can be any service.
 fn finish_head<const HTTP1: bool>(mut response: Response) -> Response {
     let status = response.status();
-    if status.is_informational()
-        || matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED)
-    {
+    let without_content = matches!(
+        status,
+        StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
+    );
+    if status.is_informational() || without_content {
         return finish::<HTTP1>(response);
     }
     let length = match response.body().size_hint().exact() {

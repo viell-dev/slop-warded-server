@@ -60,9 +60,15 @@ over HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
   codings, and a `Content-Length` beside it goes, such as Axum's handlers add: Hyper closed the
   connection over both without a response. HTTP/2 and HTTP/3 have no `Transfer-Encoding`, and the
   length applies. Repeated equal `Content-Length` fields become one, where HTTP/1.1 sent no
-  response to HEAD. Invalid ones for content of unknown length go, with a warning. Informational
-  responses, and successful ones to CONNECT, lose their content and the fields that would frame it,
-  which made Hyper panic or close the connection.
+  response to HEAD. Invalid ones for content of unknown length go, with a warning. A 101 that
+  upgrades an HTTP/1.1 connection, and a successful response to CONNECT, lose their content and the
+  fields that would frame it, which made Hyper panic or close the connection.
+- **Statuses without content** ([#33](https://github.com/viell-dev/slop-warded-server/issues/33)):
+  an informational status, such as 103, as the final response gets a 500 on every protocol, and the
+  log says `the application responded with an informational status`. HTTP/2 reset the stream, and
+  HTTP/1.1 closed the connection after its 500; HTTP/3 answered 500 already. A 101 still upgrades an
+  HTTP/1.1 connection. The response to HEAD on a 205 has `content-length: 0`, as for GET, and not a
+  length that the application declared.
 
 ## 0.1.0-alpha.2 - 2026-11-25
 

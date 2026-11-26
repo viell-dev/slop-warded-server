@@ -141,3 +141,20 @@ async fn an_invalid_length_is_logged() {
     let warning = "the application declared an invalid Content-Length declared=[\"5\", \"6\"]";
     assert!(log.contains(warning), "{log}");
 }
+
+#[tokio::test]
+async fn an_informational_final_status_is_logged() {
+    let authority = Authority::new();
+    let app = axum::Router::new().route("/", get(|| async { StatusCode::EARLY_HINTS }));
+    let log = logged(|| async {
+        let running = Running::start(common::server(&authority), app);
+        let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
+            .await
+            .unwrap();
+        let response = client.get("/").await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    })
+    .await;
+    let error = "the application responded with an informational status status=103 Early Hints";
+    assert!(log.contains(error), "{log}");
+}
