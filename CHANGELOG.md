@@ -35,6 +35,9 @@ New projects open in a browser at once, and their code holds no wiring
     languages moved to the [website guide](https://viell-dev.github.io/slop-warded-server/website.html#languages).
   - Projects from earlier templates keep working. To take the new start into one, add the
     `.cargo/config.toml` of its template.
+- The [HTTP/3 page](https://viell-dev.github.io/slop-warded-server/http3.html#in-browsers) starts
+  Chromium for `127.0.0.1`, since a forced QUIC connection to `localhost` can fail on `::1`
+  ([#36](https://github.com/viell-dev/slop-warded-server/issues/36)).
 
 Requests and responses keep the rules of HTTP, so that the application and its routes see the same
 request on every protocol, and clients get the true length of a response. Requests that the
