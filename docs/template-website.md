@@ -32,7 +32,8 @@ bacon run-long
 
 The project's `bacon.toml` watches `templates/` and `static/` as well as Rust files.
 Leave the page open. It reloads when the server starts again. You can also restart
-`cargo run` by hand after each edit.
+`cargo run` by hand after each edit. If the browser stays on the old page, see
+[Troubleshooting](./troubleshooting.md#the-page-does-not-reload).
 
 ## What is where
 
@@ -44,6 +45,7 @@ Leave the page open. It reloads when the server starts again. You can also resta
 | The contact form and what it accepts | `templates/contact.html` and `src/contact.rs` |
 | Which paths answer and how they're tested | `src/routes.rs` and `src/routes/tests.rs` |
 | Styles, icons and images | `static/` |
+| How the server starts | `src/main.rs` |
 | The watched directories or local address | `bacon.toml` or `.cargo/config.toml` |
 
 ## First change

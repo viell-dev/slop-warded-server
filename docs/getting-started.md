@@ -28,11 +28,11 @@ cargo generate viell-dev/slop-warded-server --tag 0.1.0-alpha.2
 
 It asks for a template and a project name, and makes a directory with that name:
 
-| Template            | Choose it for                                        | Guide                        |
-| ------------------- | ---------------------------------------------------- | ---------------------------- |
-| `templates/minimal` | Learning, or adding only what you want               | [Minimal](./template-minimal.md) |
-| `templates/api`     | A JSON API, also as the back end of an app            | [API](./template-api.md) |
-| `templates/website` | HTML pages from the server, with a form and styles   | [Website](./template-website.md) |
+| Template | Choose it for | Guide |
+| --- | --- | --- |
+| `templates/minimal` | Learning, or adding only what you want | [Minimal](./template-minimal.md) |
+| `templates/api` | A JSON API, also as the back end of an app | [API](./template-api.md) |
+| `templates/website` | HTML pages from the server, with a form and styles | [Website](./template-website.md) |
 
 To skip the questions, name both:
 
