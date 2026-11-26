@@ -365,7 +365,11 @@ async fn statuses_without_content_have_no_body() {
         )
         .route(
             "/205",
-            axum_get(|| async { (StatusCode::RESET_CONTENT, "unexpected") }),
+            // With a Transfer-Encoding, which cannot go beside the length 0.
+            axum_get(|| async {
+                let chunked = [(header::TRANSFER_ENCODING, "chunked")];
+                (StatusCode::RESET_CONTENT, chunked, "unexpected")
+            }),
         )
         .route(
             "/304",

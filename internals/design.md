@@ -181,8 +181,8 @@ the application and Warded see a well-formed head on every protocol.
   IP address.
 - **An HTTP/1 target's host replaces the field's** rather than leaving both. RFC 9112 section
   3.2.2 tells the server to use the target's, and an application that reads the field would
-  otherwise use the other. The field stays required over HTTP/1.1, which section 3.2 asks for any
-  request.
+  otherwise use the other. The field stays required over HTTP/1.1, as section 3.2 says for every
+  HTTP/1.1 request.
 - **HTTP/2 and HTTP/3 compare hosts as RFC 3986 normalizes them**, in any case and with the
   scheme's default port or without, as RFC 9113 section 8.3.1 allows an origin server. h3 compares
   the first field exactly, as RFC 9114 section 4.3.1 says, and is stricter.
