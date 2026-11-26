@@ -48,12 +48,12 @@ pub fn app(notes: Notes) -> Result<Router, DefinitionError> {
 /// What the API offers, for someone who opens it in a browser.
 #[derive(Serialize)]
 struct Index {
-    endpoints: [&'static str; 4],
+    endpoints: &'static [&'static str],
 }
 
 async fn index() -> Json<Index> {
     Json(Index {
-        endpoints: [
+        endpoints: &[
             "GET /notes",
             "POST /notes",
             "GET /notes/{id}",

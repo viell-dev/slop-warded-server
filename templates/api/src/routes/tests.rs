@@ -43,6 +43,7 @@ async fn the_start_lists_the_endpoints() {
     let (status, body) = send(&app, "GET", "/", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["endpoints"][0], "GET /notes");
+    assert_eq!(body["endpoints"].as_array().unwrap().len(), 4);
 }
 
 #[tokio::test]

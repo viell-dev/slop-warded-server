@@ -1,4 +1,6 @@
 //! A form that the server checks: shown on GET, sent with POST, and followed by a redirect.
+//!
+//! The messages go nowhere yet: `send` only logs that one came. Store them or send them on there.
 
 use crate::pages::render;
 use askama::Template;
@@ -95,7 +97,8 @@ pub async fn send(input: Result<Form<Message>, FormRejection>) -> Response {
         let page = Contact::new(message, problems);
         return render(StatusCode::UNPROCESSABLE_ENTITY, &page);
     }
-    // Store the message or send it on here.
+    // Nothing keeps or sends the message yet. Store it here, in a database for instance, or send
+    // it on by e-mail, before the redirect.
     tracing::info!("a message came through the contact form");
     // A redirect after success, so that reloading the next page does not send it again.
     Redirect::to("/contact/sent").into_response()
