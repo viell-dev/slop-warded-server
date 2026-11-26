@@ -32,6 +32,11 @@
 //!
 //! HTTP/2 and HTTP/3 requests have their host in the URI instead of a `Host` field.
 //!
+//! Its head is well-formed: the server answers a request that the HTTP specifications call
+//! malformed with a 400, or over HTTP/3 a stream error, before the application and its routes see
+//! it. No field value begins or ends with a space or a tab, which HTTP/1.1 removes and HTTP/2 and
+//! HTTP/3 rule out.
+//!
 //! # Starting points
 //!
 //! Thin helpers over Axum, `tower-http` and `tracing-subscriber` set up what most projects need,
@@ -88,6 +93,7 @@ mod env;
 mod error;
 #[cfg(feature = "files")]
 mod files;
+mod head;
 #[cfg(feature = "http3")]
 mod http3;
 mod limits;

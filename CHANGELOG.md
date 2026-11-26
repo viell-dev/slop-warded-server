@@ -36,6 +36,14 @@ New projects open in a browser at once, and their code holds no wiring
   - Projects from earlier templates keep working. To take the new start into one, add the
     `.cargo/config.toml` of its template.
 
+Requests that the HTTP specifications call malformed no longer reach the application, so that it
+and its routes see the same request on every protocol. They get a 400, which says why, and over
+HTTP/3 a stream error with `H3_MESSAGE_ERROR`.
+
+- **Whitespace around a field value**, such as `x-tenant: acme<TAB>`, is refused over HTTP/2 and
+  HTTP/3. HTTP/1.1 removes it, as before
+  ([#25](https://github.com/viell-dev/slop-warded-server/issues/25)).
+
 ## 0.1.0-alpha.2 - 2026-11-25
 
 HTTP/3 no longer lets a client fill the memory, and fewer responses are lost. The server is still not

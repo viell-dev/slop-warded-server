@@ -160,6 +160,23 @@ The alternative was to wait for an h3 release, which had not come in the 18 mont
 would not change the second point. It also avoids a panic of `h3-quinn` when a stream is stopped
 ([h3#361](https://github.com/hyperium/h3/issues/361)).
 
+## Malformed requests are refused before the application
+
+Hyper and h3 check request heads in part, and differently, so a request that one protocol refuses
+or repairs reaches the application unchanged over another, and a route can match it there only.
+`src/head.rs` holds the rules that they leave to the server. `Connection` in `src/context.rs`
+applies them where a TCP request enters the application, and the HTTP/3 bridge before that, so that
+the application and Warded see a well-formed head on every protocol.
+
+- **Refused, not repaired.** Whitespace around an HTTP/2 or HTTP/3 field value could be trimmed,
+  as Hyper's HTTP/1.1 parser does. RFC 9113 and RFC 9114 call it malformed, and trimming would hide
+  a client's defect on two protocols only.
+- **A 400 over TCP, a stream error over HTTP/3.** A Tower service cannot reset an HTTP/2 stream,
+  and the specifications allow a response to a malformed request, which also says why. The bridge
+  already refuses other malformed HTTP/3 heads with `H3_MESSAGE_ERROR`.
+- **Before the development address's own checks**, which answer a 403 for what is well-formed but
+  not for this computer.
+
 ## Choices that are easy to undo by accident
 
 - **Responses are finished for each connection**, in `src/context.rs`, outside all layers: the content

@@ -680,3 +680,76 @@ async fn one_connection_carries_concurrent_requests() {
     release.send(()).unwrap();
     assert_eq!(text(waiting.await.unwrap()).await.unwrap(), "held");
 }
+
+/// The code of the HTTP/3 stream error that a request failed with.
+fn http3_error(error: &BoxError) -> Option<h3::error::Code> {
+    match error.downcast_ref::<h3::error::StreamError>()? {
+        h3::error::StreamError::RemoteTerminate { code, .. } => Some(*code),
+        _ => None,
+    }
+}
+
+/// The status of a response, its content if it is a 200, or the HTTP/3 error instead.
+async fn outcome(response: Result<Response, BoxError>) -> String {
+    match response {
+        Ok(response) if response.status() == StatusCode::OK => text(response).await.unwrap(),
+        Ok(response) => response.status().to_string(),
+        Err(error) => {
+            http3_error(&error).map_or_else(|| format!("{error:?}"), |code| code.to_string())
+        }
+    }
+}
+
+#[tokio::test]
+async fn whitespace_around_a_field_value_is_malformed() {
+    let authority = Authority::new();
+    let tenant = warded::matchers::header_eq("x-tenant", "acme").unwrap();
+    let routes = Router::new()
+        .route(exact_path("/").and(tenant), any(|| async { "tenant" }))
+        .route(
+            exact_path("/"),
+            any(|headers: HeaderMap| async move { format!("other {:?}", headers["x-tenant"]) }),
+        );
+    let running = Running::start(common::server(&authority), app(routes));
+    for version in VERSIONS {
+        // One connection for all, which outlives the refusals.
+        let mut client = Client::connect(version, running.https, &authority)
+            .await
+            .unwrap();
+        for (value, http1) in [
+            (" acme", "tenant"),
+            ("acme ", "tenant"),
+            ("\tacme", "tenant"),
+            ("acme\t", "tenant"),
+            (" \tacme\t ", "tenant"),
+            (" ", "other \"\""),
+            // Well-formed values, which arrive as they are on every protocol.
+            ("acme", "tenant"),
+            ("a \tcme", "other \"a \tcme\""),
+            ("", "other \"\""),
+        ] {
+            let mut request = get("/");
+            let field = HeaderValue::from_static(value);
+            request.headers_mut().insert("x-tenant", field);
+            let malformed = value.trim_matches([' ', '\t']) != value;
+            let expected = match version {
+                Version::HTTP_2 if malformed => "400 Bad Request",
+                Version::HTTP_3 if malformed => "H3_MESSAGE_ERROR",
+                // Hyper's parser removes the whitespace, as RFC 9112 says.
+                _ => http1,
+            };
+            let actual = outcome(client.send(request).await).await;
+            assert_eq!(actual, expected, "{version:?} {value:?}");
+        }
+    }
+    let mut client = Client::connect(Version::HTTP_2, running.https, &authority)
+        .await
+        .unwrap();
+    let mut request = get("/");
+    request
+        .headers_mut()
+        .insert("x-tenant", HeaderValue::from_static("acme "));
+    let response = client.send(request).await.unwrap();
+    let reason = "Malformed request: a field value begins or ends with whitespace.\n";
+    assert_eq!(text(response).await.unwrap(), reason);
+}
