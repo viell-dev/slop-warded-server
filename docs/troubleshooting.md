@@ -143,8 +143,9 @@ with the reason. Fix the client.
 ## A warning about `Content-Length`
 
 Where the server knows the length of a response's content, it sends that length, whatever the
-application declared. The warning names the application's `declared` values. Leave the field out,
-and the server sets it.
+application declared, unless the application chose `Transfer-Encoding` over HTTP/1.1, which then
+frames the response instead. The warning names the application's `declared` values. Leave the
+field out, and the server sets it.
 
 | Log                                                                        | Cause                                                                                                                                      |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |

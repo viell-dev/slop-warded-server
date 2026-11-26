@@ -61,7 +61,11 @@ uses of CONNECT are not supported over HTTP/3, and 0-RTT requests are never acce
   it replaces one that a handler declared, and logs a warning. A response to HEAD without content
   keeps the length that the application declared, which the server cannot check: `any(handler)`
   takes the content off, and `handler.into_service()` keeps it, as in [the response to
-  HEAD](./middleware.md#the-response-to-head).
+  HEAD](./middleware.md#the-response-to-head). Over HTTP/1.1, a response for which the application
+  chose `Transfer-Encoding` has neither field for HEAD, as GET has no length then.
+- **Trailers with content of known length** go over HTTP/1.1 only when the application sets
+  `Transfer-Encoding: chunked`; otherwise the server sends the length, and HTTP/1.1 then has no place
+  for trailers. HTTP/2 and HTTP/3 send them either way.
 - **gRPC** has not been tried.
 - **`If-Range` for files.** `StaticFiles`, `SinglePageApp` and `ServeDir` come from tower-http 0.7.1,
   which answers a range even when `If-Range` names an older version of the file, so a resumed

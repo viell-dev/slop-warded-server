@@ -30,7 +30,8 @@
 //!   `Unsecure` on the cleartext listener and the development address. Headers from a proxy are
 //!   never trusted.
 //!
-//! HTTP/2 and HTTP/3 requests have their host in the URI instead of a `Host` field.
+//! HTTP/2 and HTTP/3 requests mostly have their host in the URI instead of a `Host` field. An
+//! HTTP/1.0 or HTTP/2 request may name no host at all.
 //!
 //! Its head is well-formed: the server answers a request that the HTTP specifications call
 //! malformed with a 400, or over HTTP/3 a stream error, before the application and its routes see

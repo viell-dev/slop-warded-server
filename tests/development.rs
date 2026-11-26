@@ -391,8 +391,10 @@ async fn malformed_hosts_are_refused_before_the_development_address_checks_them(
         let refusal = format!("\r\n\r\nMalformed request: {refusal}.\n");
         assert!(response.ends_with(&refusal), "{response}");
     }
-    // HTTP/2 without a host is well-formed, but not for this computer.
-    let (_, content) = common::raw_http2(address, &common::HOSTLESS_GET).await;
+    // HTTP/2 without a host is well-formed, but not for this computer. `raw_http2` decodes only
+    // the indexed 200 and 400, and the 403 comes as a literal.
+    let (status, content) = common::raw_http2(address, &common::HOSTLESS_GET).await;
+    assert_eq!(status, None);
     let content = String::from_utf8(content).unwrap();
     assert!(content.starts_with(REFUSED), "{content}");
 }

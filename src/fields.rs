@@ -50,9 +50,8 @@ fn check_host(head: &mut Parts) -> Result<(), &'static str> {
     if fields.next().is_some() {
         return Err("the request has several Host fields");
     }
-    let http1 = matches!(head.version, Version::HTTP_10 | Version::HTTP_11);
-    let field_is_valid =
-        field.is_none_or(|field| (http1 && field.is_empty()) || host(field).is_some());
+    let field_is_valid = field
+        .is_none_or(|field| (is_http1(head.version) && field.is_empty()) || host(field).is_some());
     if !field_is_valid {
         return Err("the Host field is not a valid host");
     }
@@ -62,7 +61,7 @@ fn check_host(head: &mut Parts) -> Result<(), &'static str> {
             Err("the HTTP/1.1 request has no Host field")
         }
         (None, None) if head.version == Version::HTTP_3 => Err("the request names no host"),
-        (Some(target), Some(_)) if http1 => {
+        (Some(target), Some(_)) if is_http1(head.version) => {
             let value =
                 HeaderValue::try_from(target.as_str()).expect("an authority is a valid value");
             head.headers.insert(HOST, value);
@@ -76,6 +75,14 @@ fn check_host(head: &mut Parts) -> Result<(), &'static str> {
         }
         _ => Ok(()),
     }
+}
+
+/// Whether HTTP/1 carries a message of this version, with its own framing and `Host` rules.
+pub(crate) fn is_http1(version: Version) -> bool {
+    matches!(
+        version,
+        Version::HTTP_09 | Version::HTTP_10 | Version::HTTP_11
+    )
 }
 
 /// The host in a `Host` field value, if it is one.
