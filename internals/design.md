@@ -190,7 +190,7 @@ the application and Warded see a well-formed head on every protocol.
   authority information, which an intermediary makes of an HTTP/1.0 request without `Host`. HTTP/3
   requires one (RFC 9114 section 4.3.1), which h3 checks too.
 - **Before the development address's own checks**, which answer a 403 for a well-formed request for
-  another host, or with none over HTTP/1.0.
+  another host, or with none over HTTP/1.0 or HTTP/2.
 
 ## Choices that are easy to undo by accident
 
